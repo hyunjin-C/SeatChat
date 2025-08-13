@@ -812,6 +812,20 @@ class ChatModuleWidget(QFrame):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(15)
 
+        title_label = QLabel("🪑 Smart Posture Mate")
+        title_label.setStyleSheet("""
+            font-size: 13pt;
+            font-weight: 900;
+            color: #2c3e50;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #e0e0e0;
+        """)
+        title_label.setAlignment(Qt.AlignCenter)
+
+        # --- 2. 생성한 제목을 레이아웃의 맨 위에 추가 ---
+        layout.addWidget(title_label)
+
+
         self.do_section = CollapsibleSection("✅ What to do")
         self.summary_section = CollapsibleSection("📊 Summary (last 10min)")
         self.rec_section = CollapsibleSection("💡 Recommendation")
