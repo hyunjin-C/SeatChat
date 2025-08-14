@@ -720,7 +720,7 @@ class OpenPosePanel(QFrame):
 
 # ---- Collapsible Section Widget ----
 class CollapsibleSection(QFrame):
-    TRUNCATE_LIMIT = 100 
+    TRUNCATE_LIMIT = 110 
 
     def __init__(self, title, parent=None):
         super().__init__(parent)
@@ -812,7 +812,7 @@ class ChatModuleWidget(QFrame):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(15)
 
-        title_label = QLabel("🪑 Smart Posture Mate")
+        title_label = QLabel("Smart Posture Mate")
         title_label.setStyleSheet("""
             font-size: 13pt;
             font-weight: 900;
@@ -826,15 +826,17 @@ class ChatModuleWidget(QFrame):
         layout.addWidget(title_label)
 
 
-        self.do_section = CollapsibleSection("✅ What to do")
-        self.summary_section = CollapsibleSection("📊 Summary (last 10min)")
-        self.rec_section = CollapsibleSection("💡 Recommendation")
+        self.do_section = CollapsibleSection("Do this now")
+        self.summary_section = CollapsibleSection("Summary and Habit huard")
+        self.why_section = CollapsibleSection("Why this matters")
+        self.plan_section = CollapsibleSection("Short Term Plan")
 
         layout.addWidget(self.do_section)
         layout.addWidget(self.summary_section)
-        layout.addWidget(self.rec_section)
+        layout.addWidget(self.why_section)
+        layout.addWidget(self.plan_section)
         
-        chat_title_label = QLabel("💬 Chat")
+        chat_title_label = QLabel("Ask Me")
         chat_title_label.setStyleSheet("font-size: 10pt; font-weight: bold; color: #333;")
         layout.addWidget(chat_title_label)
         
@@ -1354,9 +1356,10 @@ class MainWindow(QWidget):
             self.chat_module.summary_section.setText(f"Error: {result['error']}")
             return
 
-        self.chat_module.do_section.setText(result.get('what_to_do', ''))
-        self.chat_module.summary_section.setText(result.get('summary', ''))
-        self.chat_module.rec_section.setText(result.get('recommendation', ''))
+        self.chat_module.do_section.setText(result.get('Do this now', ''))
+        self.chat_module.why_section.setText(result.get('Why this matters', ''))
+        self.chat_module.summary_section.setText(result.get('Summary and Habit Guard', ''))
+        self.chat_module.plan_section.setText(result.get('Short Term Plan', ''))
         print("[LLM] Analysis updated.")
 
     # ---------- Cleanup ----------
