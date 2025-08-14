@@ -1,7 +1,8 @@
 import openai
-import os
 import time
 import json
+from langchain_core.messages import HumanMessage, AIMessage
+
 
 USE_REAL_LLM = False 
 
@@ -24,15 +25,7 @@ def mock_get_analysis_data():
     }
 
 def real_get_analysis_data():
-    try:
-        # 예: latest_data = get_data_from_db()
-        #     prompt = make_analysis_prompt(latest_data)
-        #     response = openai.ChatCompletion.create(...)
-        #     result = json.loads(response.choices[0].message['content'])
-        #     return result
-        return mock_get_analysis_data()
-    except Exception as e:
-        return {"error": str(e)}
+    pass
 
 # ----------------- Pipeline 2: Chat -----------------
 
@@ -45,14 +38,7 @@ def get_chat_response(user_message: str, chat_history: list):
 
 def mock_get_chat_response(user_message: str, chat_history: list):
     time.sleep(1)
-    return {"answer": f"Hello"}
+    return AIMessage(content=f"[채팅 테스트] '{user_message}'라고 말씀하셨네요! 반갑습니다.")
 
 def real_get_chat_response(user_message: str, chat_history: list):
-    try:
-        # messages = chat_history + [{"role": "user", "content": user_message}]
-        # response = openai.ChatCompletion.create(...)
-        # answer = response.choices[0].message['content']
-        # return {"answer": answer}
-        return mock_get_chat_response(user_message, chat_history)
-    except Exception as e:
-        return {"error": str(e)}
+    pass

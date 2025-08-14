@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from zipfile import BadZipFile
 import cv2
+from langchain_core.messages import HumanMessage, AIMessage
 
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -880,20 +881,25 @@ class LLMWorker(QObject):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.chat_history = []
+        self.chat_history = [
+            AIMessage(content="Hello! How can I help you with your posture today?")
+        ]
 
     def run_analysis(self):
         result = get_analysis_data()
         self.analysis_ready.emit(result)
         
     def run_chat(self, user_message: str):
-        result = get_chat_response(user_message, self.chat_history)
+        human_msg = HumanMessage(content=user_message)
+
+        ai_msg = get_chat_response(user_message, self.chat_history)
         
-        self.chat_history.append({'role': 'user', 'content': user_message})
-        if 'answer' in result:
-            self.chat_history.append({'role': 'assistant', 'content': result['answer']})
-            
-        self.chat_ready.emit(result)
+        self.chat_history.append(human_msg)
+        if isinstance(ai_msg, AIMessage):
+            self.chat_history.append(ai_msg)
+            self.chat_ready.emit({"answer": ai_msg.content})
+        else:
+             self.chat_ready.emit(ai_msg)
 
 
 # --------------------- Main window ---------------------
