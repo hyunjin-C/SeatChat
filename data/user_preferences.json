@@ -1,0 +1,74 @@
+{
+  "1_JSY": {
+    "alert_frequency": "hourly_summary",
+    "display_preference": "background_notifications_only",
+    "guidance_style": "facilitative",
+    "chat_interaction": "minimal_notifications",
+    "tone_preference": "formal_professional,motivational_encouraging,neutral_informational",
+    "reasoning_speed": "slow_thorough",
+    "completeness": 0.488
+  },
+  "2_KYK": {
+    "alert_frequency": "immediate",
+    "display_preference": "unspecified",
+    "guidance_style": "prescriptive",
+    "chat_interaction": "unspecified",
+    "tone_preference": "motivational_encouraging,authoritative_strict,neutral_informational",
+    "reasoning_speed": "unspecified",
+    "completeness": 0.717
+  },
+  "3_JSH": {
+    "alert_frequency": "only_when_extremely_bad",
+    "display_preference": "unspecified",
+    "guidance_style": "prescriptive",
+    "chat_interaction": "minimal_notifications",
+    "tone_preference": "neutral_informational,motivational_encouraging",
+    "reasoning_speed": "slow_thorough",
+    "completeness": 0.591
+  },
+  "4_PCY": {
+    "alert_frequency": "immediate",
+    "display_preference": "unspecified",
+    "guidance_style": "prescriptive",
+    "chat_interaction": "minimal_notifications",
+    "tone_preference": "neutral_informational,motivational_encouraging",
+    "reasoning_speed": "fast_shallow",
+    "completeness": 0.622
+  },
+  "5_OMW": {
+    "alert_frequency": "unspecified",
+    "display_preference": "unspecified",
+    "guidance_style": "prescriptive",
+    "chat_interaction": "minimal_notifications",
+    "tone_preference": "neutral_informational,motivational_encouraging",
+    "reasoning_speed": "slow_thorough",
+    "completeness": 0.711
+  },
+  "6_YDH": {
+    "alert_frequency": "only_when_extremely_bad",
+    "display_preference": "background_notifications_only",
+    "guidance_style": "prescriptive",
+    "chat_interaction": "conversational",
+    "tone_preference": "neutral_informational,motivational_encouraging",
+    "reasoning_speed": "fast_shallow",
+    "completeness": 0.644
+  },
+  "7_LCY": {
+    "alert_frequency": "immediate",
+    "display_preference": "unspecified",
+    "guidance_style": "prescriptive",
+    "chat_interaction": "unspecified",
+    "tone_preference": "neutral_informational,motivational_encouraging",
+    "reasoning_speed": "unspecified",
+    "completeness": 0.568
+  },
+  "8_HSK": {
+    "alert_frequency": "every_few_minutes",
+    "display_preference": "unspecified",
+    "guidance_style": "prescriptive",
+    "chat_interaction": "unspecified",
+    "tone_preference": "formal_professional,neutral_informational",
+    "reasoning_speed": "slow_thorough",
+    "completeness": 0.558
+  }
+}
