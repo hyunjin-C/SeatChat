@@ -1,4 +1,11 @@
 from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from pathlib import Path
+
+@dataclass(frozen=True)
+class PromptFiles:
+    system_path: Path
+    user_path: Path
 
 class ToDoBundle(BaseModel):
     do_this_now: str = Field(..., description="지금 당장 할 1~3개의 구체 행동")

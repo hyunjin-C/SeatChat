@@ -13,13 +13,30 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
 import importlib.util
-from models import ToDoBundle
+from models import ToDoBundle, PromptFiles
 
 BEHAVIOR_PATH = str(Path("./scripts/posture_behavior_analysis_all.py"))
 PATTERN_PATH  = str(Path("./scripts/posture_pattern_all_repeat_time.py"))
 RANKING_PATH  = str(Path("./scripts/posture_ranking_all.py"))
-ASK_ME_CHAT_SYSTEM_PROMPT = str(Path("./prompts/ASK_ME_CHAT_system_prompt.txt"))
-ASK_ME_CHAT_USER_TEMPLATE = str(Path("./prompts/ASK_ME_CHAT_user_template.txt"))
+
+DO_SYS = str(Path("./prompts/DO_THIS_NOW_system_prompt.txt"))
+DO_USER = str(Path("./prompts/DO_THIS_NOW_user_template.txt"))
+WHY_SYS = str(Path("./prompts/WHY_THIS_MATTERS_system_prompt.txt"))
+WHY_USER = str(Path("./prompts/WHY_THIS_MATTERS_user_template.txt"))
+GUIDE_SYS = str(Path("./prompts/SUMMARY_HABIT_GUARD_system_prompt.txt"))
+GUIDE_USER = str(Path("./prompts/SUMMARY_HABIT_GUARD_user_template.txt"))
+PLAN_SYS = str(Path("./prompts/SHORT_TERM_PLAN_system_prompt.txt"))
+PLAN_USER = str(Path("./prompts/SHORT_TERM_PLAN_user_template.txt"))
+CHAT_SYS = str(Path("./prompts/ASK_ME_CHAT_system_prompt.txt"))
+CHAT_USER = str(Path("./prompts/ASK_ME_CHAT_user_template.txt"))
+
+PROMPT_FILES = {
+    "do":    PromptFiles(DO_SYS,   DO_USER),
+    "why":   PromptFiles(WHY_SYS,  WHY_USER),
+    "guide": PromptFiles(GUIDE_SYS,GUIDE_USER),
+    "plan":  PromptFiles(PLAN_SYS, PLAN_USER),
+    "chat":  PromptFiles(CHAT_SYS, CHAT_USER),
+}
 
 PREFERENCES_JSON_PATH = Path("./data/user_preferences.json")
 
@@ -33,75 +50,208 @@ def _load_module(name: str, file_path: str):
     spec.loader.exec_module(mod)
     return mod
 
-def _read_text(path: str) -> str:
+def _read_text(path: str | Path) -> str:
+    path = str(path)
     if not path or not os.path.exists(path):
         raise FileNotFoundError(f"Prompt file not found: {path}")
     with open(path, "r", encoding="utf-8") as f:
         return f.read().strip()
 
-def _clip_words(text: str, max_words: int = 24) -> str:
-    parts = text.split()
-    return text if len(parts) <= max_words else " ".join(parts[:max_words])
+def _jsonify_if_needed(v):
+    # 리스트/딕셔너리/불리언은 JSON 문자열로, 그 외는 문자열
+    if isinstance(v, (list, dict, bool)):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
 
-def _fill_user_template(template_text: str, payload: dict) -> str:
-    """[USER MESSAGE TEMPLATE]의 <<FILL: ...>> 토큰을 payload 값으로 치환"""
-    def J(x): return json.dumps(x, ensure_ascii=False)
-    filled = template_text
+# tone_preference: [] or ["neutral_informational"] or ["motivational_encouraging"] or ["authoritative_strict"]
+# guidance_style: "prescriptive" | "facilitative" | "mixed" | "unspecified"
+# live.current_label: UPRIGHT|UPRIGHT_LEFT|UPRIGHT_RIGHT|FORWARD|FORWARD_LEFT|FORWARD_RIGHT|BACK|BACK_LEFT|BACK_RIGHT
+# personal.main_discomforts: ["neck stiffness","lower back pain"] or []
+# prefs.allowed_stretches: ["chest_opener","neck_release","hip_hinge_extension"] or []
+# profile.chat_interaction: "minimal_notifications" | "conversational" | "occasional_qna"
+# profile.config_intentions: ["tone","notification_frequency","feedback_modality","goal_settings"] or []
+# profile.feedback_modality: ["text_notification","visual_diagram","auditory_voice","tactile_vibration"] or []
+# profile.alert_rule: "immediate" | "every_few_minutes" | "hourly_summary" | "only_when_extremely_bad" | "user_configurable" | "unspecified"
+# profile.trust_preference: {"ai_only_ok":true|null,"human_checkins_desired":"none|occasional|regular"}
+# profile.privacy_sensing: {"accepts_storage":"unsure","sensing":["pressure_chair"]}
 
-    # 기본 필드
-    filled = filled.replace("<<FILL: the user’s chat message>>", payload.get("question",""))
+def _build_common_inputs(metrics: Dict[str, Any], preference: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    - metrics: dict from _summarize_once()
+      • metrics['core']           : core metrics (Good posture time 등)
+      • metrics['dominance_top']  : dominance top label/repetition
+      • metrics['motif_summary']  : L2/L3 motif summary
+      • metrics['live']    : live label/duration
+      • metrics['batch_window_minutes'] : recent window (minutes)
+    - preference: user preference/runtime settings
+      • tone_preference, guidance_style, pain_flags, key_goal, improvement_timeframe
+      • history_good_pct
+      • params_* / wants_stretch / allowed_stretches
+      • session_*  (elapsed/remaining/anchor_candidates)
 
-    # profile
-    prof = payload.get("profile", {})
-    # 주의: 템플릿의 라디오형 옵션은 문자열 그대로 필요할 수 있어 .strip('"') 사용
-    filled = filled.replace(
-        '<<FILL: [] or ["motivational_encouraging"] or ["authoritative_strict"] or ["neutral_informational"]>>',
-        J(prof.get("tone_preference", []))
+    - returns: flat dotted keys dict
+    """
+    p = preference or {}
+    m = metrics or {}
+
+    core = (m.get("core") or {})
+    dom  = (m.get("dominance_top") or {})
+    live = (m.get("live") or {})
+    motifs = (m.get("motif_summary") or {})
+    batch_window_min = int(m.get("batch_window_minutes", 10))
+
+    # 기본 선호/개인정보
+    tone_pref = p.get("tone_preference", [])
+    guidance  = p.get("guidance_style", "unspecified")
+    pain_flags = p.get("pain_flags", [])
+    key_goal   = p.get("key_goal") or p.get("goal") or None
+    improvement_timeframe = p.get("improvement_timeframe", "4-6 weeks")
+
+    # 코어/배치 지표
+    good_minutes = core.get("Good posture time (min)", 0) or 0
+    bad_minutes  = core.get("Bad posture time (min)", 0) or 0
+    good_pct     = core.get("Good posture time (%)", 0) or 0
+    bad_pct      = 100 - good_pct if isinstance(good_pct, (int, float)) else 0
+
+    top_time_label   = dom.get("top_time_label", "FORWARD")
+    top_time_minutes = dom.get("top_time_minutes", 0) or 0
+    top_rep_label    = dom.get("top_repetition_label", "FORWARD")
+    top_rep_count    = int(dom.get("top_repetition_count", 0) or 0)
+
+    # 라이브(실시간) 라벨/지속
+    current_label  = live.get("current_label") or top_time_label or "FORWARD"
+    continuous_sec = int(live.get("continuous_seconds_current_label", 0) or 0)
+
+    # 히스토리 기준선/대표 반복 시퀀스
+    history_good_pct = p.get("history_good_pct", good_pct) or good_pct
+    l3_top_seq = (motifs.get("L3") or {}).get("most_repeated_sequence")
+    l2_top_seq = (motifs.get("L2") or {}).get("most_repeated_sequence")
+    history_top_repeated_sequence = l3_top_seq or l2_top_seq or "N/A"
+
+    # 최근 윈도우 해석(Guide/Plan 용)
+    recent_window_min = batch_window_min
+    recent_good_pct   = good_pct
+    recent_top_label  = top_time_label if top_time_label not in ("UPRIGHT", None) else top_rep_label
+    recent_top_count  = int(top_rep_count or 0)
+    # 평균 episode 길이(초): 총 시간(분) → 초 / 횟수 (5초 단위 반올림)
+    recent_top_avg_sec = int(round(((top_time_minutes or 0) * 60) / max(recent_top_count, 1) / 5) * 5)
+    recent_continuous_bad_sec = int(round((continuous_sec or 0) / 5) * 5)
+    recent_repetition_label = top_rep_label
+    recent_most_repeated_sequence = history_top_repeated_sequence
+    recent_most_repeated_count = int(
+        (motifs.get("L3") or {}).get("most_repeated_count")
+        or (motifs.get("L2") or {}).get("most_repeated_count")
+        or 0
     )
-    filled = filled.replace(
-        '<<FILL: "minimal_notifications" | "conversational" | "occasional_qna">>',
-        J(prof.get("chat_interaction","conversational")).strip('"')
-    )
-    filled = filled.replace(
-        '<<FILL: "prescriptive" | "facilitative" | "mixed" | "unspecified">>',
-        J(prof.get("guidance_style","unspecified")).strip('"')
-    )
-    filled = filled.replace("<<FILL: short phrase or null>>", J(prof.get("goals")))
-    filled = filled.replace('<<FILL: ["neck stiffness","lower back pain"] or []>>', J(prof.get("discomforts", [])))
-    filled = filled.replace('<<FILL: ["tone","notification_frequency","feedback_modality","goal_settings"] or []>>',
-                            J(prof.get("config_intentions", [])))
-    filled = filled.replace('<<FILL: ["text_notification","visual_diagram","auditory_voice","tactile_vibration"] or []>>',
-                            J(prof.get("feedback_modalities", [])))
-    filled = filled.replace(
-        '<<FILL: "immediate" | "every_few_minutes" | "hourly_summary" | "only_when_extremely_bad" | "user_configurable" | "unspecified">>',
-        J(prof.get("alert_rule", "unspecified")).strip('"')
-    )
-    filled = filled.replace('<<FILL: {"ai_only_ok":true|null,"human_checkins_desired":"none|occasional|regular"}>>',
-                            J(prof.get("trust_preference", {})))
-    filled = filled.replace("<<FILL: brief note or {}>>", J(prof.get("privacy_sensing", {})))
 
-    # previous_outputs
-    prev = payload.get("previous_outputs", {})
-    filled = filled.replace("<<FILL: string from box 1>>", J(prev.get("do_this_now","")).strip('"'))
-    filled = filled.replace("<<FILL: string from box 2>>", J(prev.get("why_this_matters","")).strip('"'))
-    filled = filled.replace("<<FILL: string from box 3 line 1>>", J(prev.get("summary_line","")).strip('"'))
-    filled = filled.replace("<<FILL: string from box 3 line 2 or null>>", J(prev.get("habit_guard_line")))
-    sess = prev.get("session_plan", {})
-    filled = filled.replace("<<FILL: string from box 4 line 1>>", J(sess.get("plan_line","")).strip('"'))
-    filled = filled.replace("<<FILL: string from box 4 line 2 or null>>", J(sess.get("stretch_line")))
+    # 파라미터/런타임 기본값
+    params_T_sec = int(p.get("params_T_sec", 90))
+    params_N     = int(p.get("params_N", 3))
+    params_M     = int(p.get("params_M", recent_window_min))
+    params_delta_pct_threshold   = int(p.get("params_delta_pct_threshold", 5))
+    params_suggest_stand_break   = bool(p.get("params_suggest_stand_break", True))
+    params_suggest_stand_break_sec = int(p.get("params_suggest_stand_break_sec", 45))
 
-    # history
-    hist = payload.get("history", {})
-    filled = filled.replace("<<FILL: integer or null>>", J(hist.get("baseline_good_pct")))
-    filled = filled.replace('<<FILL: ["FORWARD","BACK"] or []>>', J(hist.get("dominant_labels", [])))
-    filled = filled.replace('<<FILL: ["FORWARD → BACK","BACK → FORWARD"] or []>>', J(hist.get("top_sequences", [])))
+    params_reset_interval_min = int(p.get("params_reset_interval_min", max(20, batch_window_min)))
+    params_stand_sec          = int(p.get("params_stand_sec", 45))
+    params_forward_bout_cap_sec = int(p.get("params_forward_bout_cap_sec", 60))
+    params_wants_habit_break_clause = bool(p.get("params_wants_habit_break_clause", True))
+    params_wants_anchor_stretch     = bool(p.get("params_wants_anchor_stretch", True))
 
-    # prefs
-    pr = payload.get("prefs", {})
-    filled = filled.replace("<<FILL: true|false>>", J(pr.get("wants_stretch", False)))
-    filled = filled.replace('<<FILL: ["chest_opener","neck_release","hip_hinge_extension"] or []>>',
-                            J(pr.get("allowed_stretches", [])))
-    return filled
+    prefs_wants_stretch   = bool(p.get("wants_stretch", False))
+    prefs_allowed_stretch = p.get("allowed_stretches",
+                                  ["chest_opener","neck_release","hip_hinge_extension"])
+
+    session_minutes_elapsed   = int(p.get("session_minutes_elapsed", 0))
+    session_minutes_remaining = int(p.get("session_minutes_remaining", 60))
+    session_anchor_candidates = p.get("session_anchor_candidates",
+                                      ["start of next focus", "after meeting", "top of hour"])
+
+    ci = {
+        "tone_preference": tone_pref,
+        "guidance_style": guidance,
+
+        "live.current_label": current_label,
+        "live.continuous_seconds_current_label": continuous_sec,
+
+        "batch.window_minutes": batch_window_min,
+        "batch.top_time_label": top_time_label,
+        "batch.top_time_minutes": top_time_minutes,
+        "batch.top_repetition_label": top_rep_label,
+        "batch.top_repetition_count": top_rep_count,
+        "batch.good_minutes": good_minutes,
+        "batch.bad_minutes": bad_minutes,
+        "batch.good_pct": good_pct,
+        "batch.bad_pct": bad_pct,
+
+        "personal.main_discomforts": pain_flags,
+        "personal.key_goal": key_goal,
+        "personal.improvement_timeframe": improvement_timeframe,
+
+        "history.good_pct": history_good_pct,
+        "history.top_repeated_sequence": history_top_repeated_sequence,
+
+        "recent.window_min": recent_window_min,
+        "recent.good_pct": recent_good_pct,
+        "recent.top_label": recent_top_label or "FORWARD",
+        "recent.top_count": recent_top_count,
+        "recent.top_avg_sec": recent_top_avg_sec,
+        "recent.continuous_bad_sec": recent_continuous_bad_sec,
+        "recent.repetition_label": recent_repetition_label or "FORWARD",
+        "recent.most_repeated_sequence": recent_most_repeated_sequence,
+        "recent.most_repeated_count": recent_most_repeated_count,
+
+        "params.T_sec": params_T_sec,
+        "params.N": params_N,
+        "params.M": params_M,
+        "params.delta_pct_threshold": params_delta_pct_threshold,
+        "params.suggest_stand_break": params_suggest_stand_break,
+        "params.suggest_stand_break_sec": params_suggest_stand_break_sec,
+
+        "params.reset_interval_min": params_reset_interval_min,
+        "params.stand_sec": params_stand_sec,
+        "params.forward_bout_cap_sec": params_forward_bout_cap_sec,
+        "params.wants_habit_break_clause": params_wants_habit_break_clause,
+        "params.wants_anchor_stretch": params_wants_anchor_stretch,
+
+        "prefs.wants_stretch": prefs_wants_stretch,
+        "prefs.allowed_stretches": prefs_allowed_stretch,
+
+        "session.minutes_elapsed": session_minutes_elapsed,
+        "session.minutes_remaining": session_minutes_remaining,
+        "session.anchor_candidates": session_anchor_candidates,
+    }
+    return ci
+
+def _pick(d: Dict[str, Any], *keys: str) -> Dict[str, Any]:
+    return {k: d[k] for k in keys if k in d}
+
+def _fill_tokens(template_text: str, values: Dict[str, Any]) -> str:
+    """
+    템플릿의 <<FILL: key>> 토큰을 values[key]로 치환.
+    - key는 'tone_preference' 같은 '정규화된 이름'을 권장.
+    - 값은 자동으로 문자열화(리스트/딕셔너리는 JSON 직렬화).
+    """
+    out = template_text
+    for k, v in values.items():
+        token = f"<<FILL: {k}>>"
+        out = out.replace(token, _jsonify_if_needed(v))
+    return out
+
+def _make_prompt_from_files(kind: str, user_values: Dict[str, Any]) -> ChatPromptTemplate:
+    """
+    kind: 'do' | 'why' | 'guide' | 'plan' | 'chat'
+    user_values: 사용자 템플릿에 들어갈 key→value 맵
+    """
+    files = PROMPT_FILES[kind]
+    sys_text   = _read_text(files.system_path)
+    user_proto = _read_text(files.user_path)
+    user_filled = _fill_tokens(user_proto, user_values)
+    # system/user 한 쌍으로 고정
+    return ChatPromptTemplate.from_messages([
+        ("system", "{system_prompt}"),
+        ("human", "{user_prompt}")
+    ]).partial(system_prompt=sys_text, user_prompt=user_filled)
 
 class _Pipeline:
     """
@@ -114,23 +264,19 @@ class _Pipeline:
         self.llm = _DEFAULT_LLM
         self.memory: Optional[ConversationSummaryBufferMemory] = None
 
-        # 분석 모듈 로드
         self.m_behavior = _load_module("posture_behavior_analysis_all", BEHAVIOR_PATH)
         self.m_pattern  = _load_module("posture_pattern_all_repeat_time", PATTERN_PATH)
         self.m_ranking  = _load_module("posture_ranking_all", RANKING_PATH)
 
-        # Preferences
         self._preferences_store: Dict[str, Dict[str, Any]] = {}
         self.preference: Dict[str, Any] = {}
         self._load_preferences_store(PREFERENCES_JSON_PATH)
         self._apply_user_preference(self.user_id)
 
-        # 최신 결과 보관
         self.posture_summary_text: str = ""
         self.posture_summary_metrics: Dict[str, Any] = {}
         self.last_todo: Optional[ToDoBundle] = None
 
-        # 데이터 소스: 경로 또는 공급자 콜러블
         self.annotation_path: Optional[str] = None
         self.annotation_supplier = None
 
@@ -173,29 +319,25 @@ class _Pipeline:
         self.annotation_path = path
 
     def set_annotation_supplier(self, fn):
-        """fn() -> (df_or_path, optional_participant_path)"""
+        """fn() -> (df, optional_participant_path)"""
         self.annotation_supplier = fn
 
-    def _ensure_df(self, data: Any) -> pd.DataFrame:
-        if isinstance(data, pd.DataFrame):
-            return data
-        p = Path(str(data))
-        if not p.exists():
-            raise FileNotFoundError(f"Input not found: {p}")
-        if p.suffix.lower() in [".xlsx", ".xls"]:
-            return pd.read_excel(p)
-        elif p.suffix.lower() == ".csv":
-            return pd.read_csv(p)
-        else:
-            raise ValueError("Unsupported input type. Use xlsx/csv/DataFrame.")
-
-    def _summarize_once(self, df_or_path: Any, participant_path: Optional[str]) -> Tuple[str, Dict[str, Any]]:
-        df = self._ensure_df(df_or_path)
-
+    def _summarize_once(self, df: Any, participant_path: Optional[str]) -> Tuple[str, Dict[str, Any]]:
         core = self.m_behavior.compute_summary_row(df)
-
         summary_df = pd.DataFrame([core])
         top_df, _ranks_df = self.m_ranking.build_dominance_tables(summary_df)
+
+        if not top_df.empty:
+            raw_dom = top_df.iloc[0].to_dict()
+        else:
+            raw_dom = {}
+
+        dominance_top = {
+            "top_time_label": raw_dom.get("top_time_label"),
+            "top_time_minutes": raw_dom.get("top_time_minutes", raw_dom.get("top_time_total_min", 0)) or 0,
+            "top_repetition_label": raw_dom.get("top_repetition_label"),
+            "top_repetition_count": int(raw_dom.get("top_repetition_count", 0) or 0),
+        }
 
         temp_path = None
         try:
@@ -208,23 +350,74 @@ class _Pipeline:
                 row, _motifs = self.m_pattern.analyze_participant(temp_path)
         finally:
             if temp_path and temp_path.exists():
-                try: temp_path.unlink()
-                except Exception: pass
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
 
-        good_pct = core.get("Good posture time (%)")
-        top_time_label = top_df.iloc[0]["top_time_label"] if not top_df.empty else None
-        top_rep_label  = top_df.iloc[0]["top_repetition_label"] if not top_df.empty else None
         l3_seq = row.get("L3_most_time_sequence") or row.get("L3_most_repeated_sequence")
         l2_seq = row.get("L2_most_time_sequence") or row.get("L2_most_repeated_sequence")
 
+        def _infer_live_from_df(df: pd.DataFrame, fallback_label: Optional[str]) -> Dict[str, int | str]:
+            label_cols = ["label", "Label", "posture_label", "posture", "state", "State"]
+            dur_cols   = ["duration_sec", "duration_s", "dur_sec", "seconds"]
+
+            label_col = next((c for c in label_cols if c in df.columns), None)
+            dur_col   = next((c for c in dur_cols if c in df.columns), None)
+
+            start_cols = ["start", "start_time", "Start", "StartTime"]
+            end_cols   = ["end", "end_time", "End", "EndTime"]
+            start_col = next((c for c in start_cols if c in df.columns), None)
+            end_col   = next((c for c in end_cols if c in df.columns), None)
+
+            current_label = None
+            continuous_sec = 0
+
+            if label_col is None:
+                current_label = fallback_label or "FORWARD"
+                return {"current_label": current_label, "continuous_seconds_current_label": int(continuous_sec)}
+
+            current_label = str(df[label_col].iloc[-1]) if len(df) else (fallback_label or "FORWARD")
+
+            if len(df) == 0:
+                return {"current_label": current_label, "continuous_seconds_current_label": int(continuous_sec)}
+
+            i = len(df) - 1
+            while i >= 0 and str(df[label_col].iloc[i]) == current_label:
+                if dur_col and pd.notna(df[dur_col].iloc[i]):
+                    try:
+                        continuous_sec += float(df[dur_col].iloc[i] or 0)
+                    except Exception:
+                        pass
+                elif start_col and end_col and pd.notna(df[start_col].iloc[i]) and pd.notna(df[end_col].iloc[i]):
+                    try:
+                        t0 = pd.to_datetime(df[start_col].iloc[i])
+                        t1 = pd.to_datetime(df[end_col].iloc[i])
+                        continuous_sec += max(0.0, (t1 - t0).total_seconds())
+                    except Exception:
+                        pass
+                else:
+                    continuous_sec += 0
+                i -= 1
+
+            return {
+                "current_label": current_label or (fallback_label or "FORWARD"),
+                "continuous_seconds_current_label": int(round(continuous_sec / 5) * 5),
+            }
+
+        live = _infer_live_from_df(df, dominance_top.get("top_time_label"))
+
+        good_pct = core.get("Good posture time (%)")
         text = (
-            f"좋은 자세 유지 비율: {good_pct}% | "
-            f"시간 지배 자세: {top_time_label} | 반복 지배 자세: {top_rep_label} | "
-            f"L3 대표 패턴: {l3_seq} | L2 대표 패턴: {l2_seq}"
+            f"Good posture percentage: {good_pct}% | "
+            f"Dominance time: {dominance_top.get('top_time_label')} | "
+            f"Dominance repetition: {dominance_top.get('top_repetition_label')} | "
+            f"L3 motif: {l3_seq} | L2 motif: {l2_seq}"
         )
+
         metrics = {
             "core": core,
-            "dominance_top": top_df.to_dict(orient="records")[0] if not top_df.empty else {},
+            "dominance_top": dominance_top,
             "motif_summary": {
                 "L3": {
                     "most_time_sequence": row.get("L3_most_time_sequence"),
@@ -237,475 +430,112 @@ class _Pipeline:
                     "most_time_total_min": row.get("L2_most_time_total_min"),
                     "most_repeated_sequence": row.get("L2_most_repeated_sequence"),
                     "most_repeated_count": row.get("L2_most_repeated_count"),
-                }
-            }
+                },
+            },
+            "batch_window_minutes": 10,
+            "live": live,
         }
         return text, metrics
 
-    def _gen_note(self, summary_text: str, metrics: Dict[str, Any], preference: Dict[str, Any]) -> ToDoBundle:
+    def _gen_note(self, metrics: Dict[str, Any], preference: Dict[str, Any]) -> ToDoBundle:
         if self.llm is None:
             raise RuntimeError("LLM is not initialized. Call configure_llm(...) first.")
+        
+        config = _build_common_inputs(metrics, preference)
 
-        # ---------- 공통 입력 정리 ----------
-        core = (metrics or {}).get("core", {})
-        dom  = (metrics or {}).get("dominance_top", {})
-        live = (metrics or {}).get("live", {})  # 있을 경우 사용
-
-        tone_pref  = preference.get("tone_preference", []) if isinstance(preference, dict) else []
-        guidance   = preference.get("guidance_style", "unspecified") if isinstance(preference, dict) else "unspecified"
-        pain_flags = preference.get("pain_flags", []) if isinstance(preference, dict) else []
-        key_goal   = preference.get("key_goal") if isinstance(preference, dict) else None
-        improvement_timeframe = preference.get("improvement_timeframe", "4-6 weeks") if isinstance(preference, dict) else "4-6 weeks"
-
-        # 최근/지배 라벨 값 추정
-        current_label      = (live.get("current_label")
-                              or dom.get("top_time_label")
-                              or "FORWARD")
-        continuous_sec     = (live.get("continuous_seconds_current_label") or 0)
-        batch_window_min   = metrics.get("batch_window_minutes", 10) if isinstance(metrics, dict) else 10
-        top_time_label     = dom.get("top_time_label", "FORWARD")
-        top_time_minutes   = dom.get("top_time_minutes", 0)
-        top_rep_label      = dom.get("top_repetition_label", "FORWARD")
-        top_rep_count      = dom.get("top_repetition_count", 0)
-        good_minutes       = core.get("Good posture time (min)", 0)
-        bad_minutes        = core.get("Bad posture time (min)", 0)
-        good_pct           = core.get("Good posture time (%)", 0)
-        bad_pct            = 100 - good_pct if isinstance(good_pct, (int, float)) else 0
-
-
-        # ---------- 1) Do This Now ----------
-        sys_do = """You are a posture coach. Return ONE line only. Keep it short and clear.
-
-        Rules
-        - Output ONE line, max ~20 words. No emojis. No extra text.
-        - End with a duration in parentheses: (20s), (30s), or (45s).
-        - Structure: {action_verb} + {body_region} + {how} + {duration}.
-        Example format: “Reset now: sit back; ears over shoulders; relax jaw (30s).”
-        - Tone:
-        • If tone_preference contains "authoritative_strict" → strict.
-        • Else if it contains "motivational_encouraging" → motivational.
-        • Else → neutral/informational (default).
-        • If guidance_style == "facilitative", you may use a soft imperative or a
-            question-like nudge (still ONE line, with duration).
-        - Target the current problem using the LIVE posture label.
-        Prefer left/right specific cues when relevant.
-        - Choose duration by severity (use the longest rule that applies):
-        1) If continuous_seconds_current_label ≥ 120 OR top_repetition_count ≥ 3
-            (in last 20 min) → (45s)
-        2) Else if bad_pct ≥ 80 in current batch window → (30s)
-        3) Else → (20s)
-        - If current_label == "UPRIGHT": give a short maintenance line, e.g.,
-        “Hold neutral; relax shoulders; easy breaths (20s).”
-        - Safety: no diagnoses or medical claims. Plain language only.
-
-        Label set (9)
-        - Good: UPRIGHT
-        - Non-neutral: UPRIGHT_LEFT, UPRIGHT_RIGHT, FORWARD, FORWARD_LEFT, FORWARD_RIGHT,
-                    BACK, BACK_LEFT, BACK_RIGHT
-
-        Directional micro‑resets (map label → how)
-        - FORWARD:        sit back; ears over shoulders; lengthen neck
-        - FORWARD_LEFT:   sit back, shift slightly right; even hips
-        - FORWARD_RIGHT:  sit back, shift slightly left; even hips
-        - BACK (recline): come forward; ribs over hips; hinge at hips
-        - BACK_LEFT:      come forward and center; level shoulders
-        - BACK_RIGHT:     come forward and center; level shoulders
-        - UPRIGHT_LEFT:   re‑center from left tilt; drop right shoulder; even weight
-        - UPRIGHT_RIGHT:  re‑center from right tilt; drop left shoulder; even weight
-        - UPRIGHT:        hold neutral; relax shoulders; easy breaths
-
-        Fallbacks
-        - If tone_preference is empty → use neutral tone.
-        - If label is unknown → treat as FORWARD.
-        - If batch stats are missing → use (20s).
-        Return ONE line only.
-        """
-
-        human_do = """tone_preference: {tone_preference}
-        guidance_style: {guidance_style}
-        live.current_label: {current_label}
-        live.continuous_seconds_current_label: {continuous_seconds_current_label}
-        batch_window_minutes: {batch_window_minutes}
-        batch.top_time_label: {top_time_label}
-        batch.top_time_minutes: {top_time_minutes}
-        batch.top_repetition_label: {top_repetition_label}
-        batch.top_repetition_count: {top_repetition_count}
-        batch.good_minutes: {good_minutes}
-        batch.bad_minutes: {bad_minutes}
-        batch.good_pct: {good_pct}
-        batch.bad_pct: {bad_pct}
-        personal.main_discomforts: {main_discomforts}
-        personal.key_goal: {key_goal}
-        Return only ONE line as instructed.
-        """
-
-        prompt_do = ChatPromptTemplate.from_messages([
-            ("system", sys_do),
-            ("human", human_do),
-        ])
-
-        inputs_common = {
-            "tone_preference": json.dumps(tone_pref, ensure_ascii=False),
-            "guidance_style": guidance,
-            "current_label": current_label,
-            "continuous_seconds_current_label": continuous_sec,
-            "batch_window_minutes": batch_window_min,
-            "top_time_label": top_time_label,
-            "top_time_minutes": top_time_minutes,
-            "top_repetition_label": top_rep_label,
-            "top_repetition_count": top_rep_count,
-            "good_minutes": good_minutes,
-            "bad_minutes": bad_minutes,
-            "good_pct": good_pct,
-            "bad_pct": bad_pct,
-            "main_discomforts": json.dumps(pain_flags, ensure_ascii=False),
-            "key_goal": key_goal or "null",
-            "improvement_timeframe": improvement_timeframe,
-        }
-
+        # ----- 1) DO THIS NOW -----
+        do_values = _pick(config,
+            "tone_preference",
+            "guidance_style",
+            "live.current_label",
+            "live.continuous_seconds_current_label",
+            "batch.window_minutes",
+            "batch.top_time_label",
+            "batch.top_time_minutes",
+            "batch.top_repetition_label",
+            "batch.top_repetition_count",
+            "batch.good_minutes",
+            "batch.bad_minutes",
+            "batch.good_pct",
+            "batch.bad_pct",
+            "personal.main_discomforts",
+            "personal.key_goal",
+        )
+        prompt_do = _make_prompt_from_files("do", do_values)
         do_chain = prompt_do | self.llm | StrOutputParser()
-        do_this_now = do_chain.invoke(inputs_common).strip()
+        do_this_now = do_chain.invoke({}).strip()
         if "\n" in do_this_now:
             do_this_now = do_this_now.splitlines()[0].strip()
-
-        # ---------- 2) Why This Matters ----------
-        sys_why = """You are a posture coach. Return ONE sentence only. Keep it friendly and clear.
-
-        Rules
-        - Output exactly ONE sentence, ~12-22 words. No emojis. No extra text.
-        - Content shape: {personal_goal_or_discomfort} + {short benefit} + (optional {timeframe})
-        AND include a brief reference to the latest posture issue
-        (live current label and/or dominant bad label from the last batch).
-        - Be positive and non-threatening. Use phrases like “can ease,” “helps,” “supports.”
-        Do NOT use fear or harm language (“damage,” “injury,” “risk of …”).
-        - Tone:
-        • If tone_preference contains "motivational_encouraging" → encouraging wording.
-        • Else → neutral/informational tone.
-        • Ignore “authoritative_strict” here (no threats); keep it factual or encouraging.
-        - Use label-aware phrasing when possible (examples below). Keep it short.
-        - If personal info is missing, use a neutral benefit (“stay comfortable and focused”).
-        - If timeframe is provided, include it; otherwise omit it.
-        - If current_label == "UPRIGHT", reference the most recent bad label from the batch.
-
-        Label-aware micro-phrases (pick one that fits the evidence)
-        - FORWARD / FORWARD_LEFT / FORWARD_RIGHT → “forward lean can tense the neck/shoulders”
-        - BACK / BACK_LEFT / BACK_RIGHT → “recline/slouch can load the lower back”
-        - UPRIGHT_LEFT / UPRIGHT_RIGHT → “tilt can load one side more than the other”
-
-        Evidence phrasing
-        - Use compact parentheticals: e.g., “(recent FORWARD 32×/10 min)” or “(BACK 19.5 min)”.
-
-        Return ONE sentence only.
-        """
-
-        human_why = """tone_preference: {tone_preference}
-        live.current_label: {current_label}
-        batch_window_minutes: {batch_window_minutes}
-        batch.top_time_label: {top_time_label}
-        batch.top_time_minutes: {top_time_minutes}
-        batch.top_repetition_label: {top_repetition_label}
-        batch.top_repetition_count: {top_repetition_count}
-        batch.good_minutes: {good_minutes}
-        batch.bad_minutes: {bad_minutes}
-        batch.good_pct: {good_pct}
-        batch.bad_pct: {bad_pct}
-        personal.main_discomforts: {main_discomforts}
-        personal.key_goal: {key_goal}
-        personal.improvement_timeframe: {improvement_timeframe}
-        Return only ONE line as instructed.
-        """
-        prompt_why = ChatPromptTemplate.from_messages([
-            ("system", sys_why),
-            ("human", human_why),
-        ])
+        
+        # ----- 2) WHY THIS MATTERS -----
+        why_values = _pick(config,
+            "tone_preference",
+            "live.current_label",
+            "batch.window_minutes",
+            "batch.top_time_label",
+            "batch.top_time_minutes",
+            "batch.top_repetition_label",
+            "batch.top_repetition_count",
+            "batch.bad_pct",
+            "personal.main_discomforts",
+            "personal.key_goal",
+            "personal.improvement_timeframe",
+        )
+        prompt_why = _make_prompt_from_files("why", why_values)
         why_chain = prompt_why | self.llm | StrOutputParser()
-        why_this_matters = why_chain.invoke({
-            "tone_preference": json.dumps(tone_pref, ensure_ascii=False),
-            "current_label": current_label,
-            "batch_window_minutes": batch_window_min,
-            "top_time_label": top_time_label,
-            "top_time_minutes": top_time_minutes,
-            "top_repetition_label": top_rep_label,
-            "top_repetition_count": top_rep_count,
-            "good_minutes": good_minutes,
-            "bad_minutes": bad_minutes,
-            "good_pct": good_pct,
-            "bad_pct": bad_pct,
-            "main_discomforts": json.dumps(pain_flags, ensure_ascii=False),
-            "key_goal": key_goal or "null",
-            "improvement_timeframe": improvement_timeframe,
-        }).strip()
+        why_this_matters = why_chain.invoke({}).strip()
 
-        # ---------- 3) Summary & Habit Guide ----------
-        sys_guide = """You are a posture coach. Output one or two lines only, as described.
-
-        General rules
-        - Maximum: 2 lines. If no pattern trigger fires, return only Line 1.
-        - Be clear, brief, and neutral/motivational (no fear language, no emojis).
-        - Numbers: round percentages to whole numbers; minutes to 1 decimal; seconds to nearest 5s.
-        - Labels are from this set: UPRIGHT (good), UPRIGHT_LEFT, UPRIGHT_RIGHT, FORWARD, FORWARD_LEFT, FORWARD_RIGHT, BACK, BACK_LEFT, BACK_RIGHT.
-
-        ------------------------------------
-        LINE 1 — Summary (always present)
-        Content format:
-        Last {recent.window_min} min: neutral {recent.good_pct}% (vs baseline {delta.good_pct});
-        top: {label1} ×{count1} (avg {avg_s1}s){, label2 ×{count2} (avg {avg_s2}s)}.
-
-        Rules
-        - Use the recent window minutes and recent percentage of good posture.
-        - Compare with personal baseline (percentage of good posture from history) and show a brief delta:
-        • If recent.good_pct >= history.good_pct + 3 → write "vs baseline ↑+{diff}%"
-        • If recent.good_pct <= history.good_pct - 3 → write "vs baseline ↓−{diff}%"
-        • Else → write "vs baseline ≈"
-        - Choose up to two non-neutral labels from the recent batch:
-        • Primary: the label with the longest time or highest count (prefer the one with longer time).
-        • Secondary: the next most prominent label if it adds information.
-        - Show each label with count and average episode duration in seconds.
-
-        ------------------------------------
-        LINE 2 — Habit Guard (only if triggered)
-        Purpose: Break repeating bad patterns by referencing the user's historical patterns AND
-        the current window. Keep it firm but supportive.
-
-        Trigger (fire if ANY is true)
-        - recent.continuous_bad_sec >= params.T_sec
-        - OR recent.repetition[label] >= params.N within params.M minutes
-        - OR recent.most_repeated_sequence == history.top_repeated_sequence (label sequence match)
-        - OR (recent.good_pct ≤ history.good_pct − params.delta_pct_threshold)
-
-        Content format (choose tone: neutral/motivational; strict only if tone_preference contains "authoritative_strict"):
-        Pattern repeating: {pattern_text}. {micro_break} then {micro_reset}.
-
-        Where
-        - {pattern_text} compactly names what’s repeating, e.g.:
-        • "forward ×{n}/{M}min"  OR  "BACK 3× in a row" OR "FORWARD→BACK repeating"
-        - {micro_break} = "Stand {stand_sec}s" if params.suggest_stand_break is true (default 45s), else "Pause {pause_sec}s"
-        - {micro_reset} is a direction-aware cue for the most problematic current label:
-            FORWARD: sit back; ears over shoulders
-            FORWARD_LEFT: sit back, shift slightly right; even hips
-            FORWARD_RIGHT: sit back, shift slightly left; even hips
-            BACK: come forward; ribs over hips
-            BACK_LEFT: come forward and center; level shoulders
-            BACK_RIGHT: come forward and center; level shoulders
-            UPRIGHT_LEFT: re-center from left tilt; drop right shoulder
-            UPRIGHT_RIGHT: re-center from right tilt; drop left shoulder
-        - Keep Line 2 ≤ 18–22 words.
-
-        If no trigger fires, omit Line 2.
-
-        ------------------------------------
-        TONE
-        - If tone_preference contains "motivational_encouraging": use encouraging verbs ("let’s break it", "you’re building a streak").
-        - If tone_preference contains "authoritative_strict": use firm imperatives ("Stop.", "Stand 45s, then reset.").
-        - Otherwise: neutral/informational tone.
-
-        ------------------------------------
-        OUTPUT
-        - Return either:
-        • ONE line (Summary) or
-        • TWO lines (Summary + Habit Guard), separated by a newline.
-        - No extra commentary.
-        """
-
-        human_guide = """tone_preference: {tone_preference}
-        history.good_pct: {history_good_pct}
-        history.top_repeated_sequence: {history_top_repeated_sequence}
-        recent.window_min: {recent_window_min}
-        recent.good_pct: {recent_good_pct}
-        recent.top_label: {recent_top_label}
-        recent.top_count: {recent_top_count}
-        recent.top_avg_sec: {recent_top_avg_sec}
-        recent.continuous_bad_sec: {recent_continuous_bad_sec}
-        recent.repetition[label]: {recent_repetition_label}
-        recent.most_repeated_sequence: {recent_most_repeated_sequence}
-        recent.most_repeated_count: {recent_most_repeated_count}
-        params.T_sec: {params_T_sec}
-        params.N: {params_N}
-        params.M: {params_M}
-        params.delta_pct_threshold: {params_delta_pct_threshold}
-        params.suggest_stand_break: {params_suggest_stand_break}
-        params.suggest_stand_break_sec: {params_suggest_stand_break_sec}
-
-        # The model will format:
-        # Line 1: summary + delta vs baseline + top labels with counts/avg seconds.
-        # Line 2: only if triggered; compact pattern text + micro-break + direction-aware micro-reset.
-        """
-        history_good_pct = preference.get("history_good_pct", good_pct) or good_pct
-        history_top_repeated_sequence = (metrics.get("motif_summary", {})
-                                              .get("L3", {})
-                                              .get("most_repeated_sequence")) or \
-                                        (metrics.get("motif_summary", {})
-                                                .get("L2", {})
-                                                .get("most_repeated_sequence")) or "N/A"
-
-        recent_window_min = batch_window_min
-        recent_good_pct = good_pct
-        recent_top_label = top_time_label if top_time_label not in ("UPRIGHT", None) else top_rep_label
-        recent_top_count = int(top_rep_count or 0)
-        recent_top_avg_sec = int(round(((top_time_minutes or 0) * 60) / max(recent_top_count, 1) / 5) * 5)
-        recent_continuous_bad_sec = int(round((continuous_sec or 0) / 5) * 5)
-        recent_repetition_label = top_rep_label
-        recent_most_repeated_sequence = history_top_repeated_sequence
-        recent_most_repeated_count = int((metrics.get("motif_summary", {})
-                                                .get("L3", {})
-                                                .get("most_repeated_count"))
-                                         or (metrics.get("motif_summary", {})
-                                                     .get("L2", {})
-                                                     .get("most_repeated_count"))
-                                         or 0)
-
-        # 파라미터 기본값 (필요시 preference로 오버라이드 가능)
-        params_T_sec = int(preference.get("params_T_sec", 90))
-        params_N = int(preference.get("params_N", 3))
-        params_M = int(preference.get("params_M", recent_window_min))
-        params_delta_pct_threshold = int(preference.get("params_delta_pct_threshold", 5))
-        params_suggest_stand_break = bool(preference.get("params_suggest_stand_break", True))
-        params_suggest_stand_break_sec = int(preference.get("params_suggest_stand_break_sec", 45))
-
-        prompt_guide = ChatPromptTemplate.from_messages([
-            ("system", sys_guide),
-            ("human", human_guide),
-        ])
+        # ----- 3) SUMMARY & HABIT GUIDE -----
+        guide_values = _pick(config,
+            "tone_preference",
+            "history.good_pct",
+            "history.top_repeated_sequence",
+            "recent.window_min",
+            "recent.good_pct",
+            "recent.top_label",
+            "recent.top_count",
+            "recent.top_avg_sec",
+            "recent.continuous_bad_sec",
+            "recent.repetition_label",
+            "params.T_sec",
+            "params.N",
+            "params.M",
+            "params.delta_pct_threshold",
+            "params.suggest_stand_break",
+            "params.suggest_stand_break_sec",
+        )
+        prompt_guide = _make_prompt_from_files("guide", guide_values)
         guide_chain = prompt_guide | self.llm | StrOutputParser()
-        summary_and_habit_guide = guide_chain.invoke({
-            "tone_preference": json.dumps(tone_pref, ensure_ascii=False),
-            "history_good_pct": history_good_pct,
-            "history_top_repeated_sequence": history_top_repeated_sequence,
-            "recent_window_min": recent_window_min,
-            "recent_good_pct": recent_good_pct,
-            "recent_top_label": recent_top_label or "FORWARD",
-            "recent_top_count": recent_top_count,
-            "recent_top_avg_sec": recent_top_avg_sec,
-            "recent_continuous_bad_sec": recent_continuous_bad_sec,
-            "recent_repetition_label": recent_repetition_label or "FORWARD",
-            "recent_most_repeated_sequence": recent_most_repeated_sequence,
-            "recent_most_repeated_count": recent_most_repeated_count,
-            "params_T_sec": params_T_sec,
-            "params_N": params_N,
-            "params_M": params_M,
-            "params_delta_pct_threshold": params_delta_pct_threshold,
-            "params_suggest_stand_break": str(params_suggest_stand_break),
-            "params_suggest_stand_break_sec": params_suggest_stand_break_sec,
-        }).strip()
+        summary_and_habit_guide = guide_chain.invoke({}).strip()
 
-        # ---------- 4) Short Term Plan ----------
-        sys_plan = """You are a posture coach. Return one or two lines only.
-        Style & Safety
-        - Clear, plain language. No fear terms or medical claims.
-        - Short and scannable. Prefer “Plan:” / “Stretch:” prefixes.
-        - If stretches are included, append: “General wellness advice; stop if you feel pain.”
-
-        Output format
-        - Always print **Line 1 (Plan)**.
-        - Print **Line 2 (Stretch)** only if `prefs.wants_stretch` is true AND a stretch is allowed.
-        - Do **not** invent times: only use anchors provided in input.
-        - Keep each line ≤ ~22 words.
-
-        Line 1 — Plan
-        - Compose from these components in order:
-        1) micro-goals (pick 1–2) based on recent problems and personal goals, e.g.:
-            • FORWARD-heavy → “keep forward-lean bouts <60s”
-            • BACK-heavy → “limit recline bouts <60s”
-            • UPRIGHT tilt → “re-center tilt during each reset”
-        2) simple rule (choose one):
-            • timed resets: “30-sec reset every {interval} min”
-            • one stand break: “add a {stand_sec}-sec stand break at {anchor}”
-        3) time anchors: pick 1–2 from `session.anchor_candidates` that fit remaining time.
-        - If a Habit Guard trigger is active, include a brief “break the {pattern} loop” clause.
-        - Respect tone:
-        • motivational_encouraging → “Let’s…”, “You’re building a streak”
-        • authoritative_strict → firm imperative without threats
-        • otherwise neutral/informational
-
-        Line 2 — Stretch (optional)
-        - Include at most one stretch set, only if `prefs.wants_stretch` is true.
-        - Choose a stretch that matches discomfort/goal:
-        • neck/shoulders → “2‑min chest opener” or “1‑min neck release”
-        • lower back/hips → “2‑min hip hinge + gentle extension”
-        - Place at one anchor; include duration; append the safety note.
-
-        Micro-reset mapping (for brief mentions when needed)
-        - FORWARD: sit back; ears over shoulders
-        - FORWARD_LEFT: sit back, shift slightly right; even hips
-        - FORWARD_RIGHT: sit back, shift slightly left; even hips
-        - BACK: come forward; ribs over hips
-        - UPRIGHT_LEFT: re-center from left tilt
-        - UPRIGHT_RIGHT: re-center from right tilt
-
-        Return exactly the lines (1 or 2), separated by a newline. No extra commentary.
-    """
-        human_plan = """tone_preference: {tone_preference}
-        previous_output: {previous_output}
-        personal.main_discomforts: {main_discomforts}
-        personal.key_goal: {key_goal}
-        recent.dominant_bad_label: {recent_dominant_bad_label}
-        recent.repeated_pattern: {recent_repeated_pattern}
-        recent.good_pct: {recent_good_pct}
-        recent.continuous_bad_sec: {recent_continuous_bad_sec}
-        recent.repetition_counts: {recent_repetition_counts}
-        session.minutes_elapsed: {session_minutes_elapsed}
-        session.minutes_remaining: {session_minutes_remaining}
-        session.anchor_candidates: {session_anchor_candidates}
-        params.reset_interval_min: {params_reset_interval_min}
-        params.stand_sec: {params_stand_sec}
-        params.forward_bout_cap_sec: {params_forward_bout_cap_sec}
-        params.wants_habit_break_clause: {params_wants_habit_break_clause}
-        params.wants_anchor_stretch: {params_wants_anchor_stretch}
-        prefs.wants_stretch: {prefs_wants_stretch}
-        prefs.allowed_stretches: {prefs_allowed_stretches}
-
-        # The model will produce:
-        # Line 1: session plan with 1–2 micro-goals + a simple rule + anchors.
-        # Line 2: stretch cue (only if prefs.wants_stretch is true and aligned with discomfort/goal).
-        # Keep output to 1–2 lines, easy to read.
-        """
-        previous_output = f"Do: {do_this_now} | Why: {why_this_matters} | Guide: {summary_and_habit_guide}"
-        recent_dominant_bad_label = recent_top_label or "FORWARD"
-        recent_repeated_pattern = recent_most_repeated_sequence
-        recent_repetition_counts = {"label": recent_repetition_label or "FORWARD", "count": recent_top_count}
-
-        # 세션/앵커 기본값 (필요시 preference에서 오버라이드)
-        session_minutes_elapsed = int(preference.get("session_minutes_elapsed", 0))
-        session_minutes_remaining = int(preference.get("session_minutes_remaining", 60))
-        session_anchor_candidates = preference.get("session_anchor_candidates",
-                                                   ["start of next focus", "after meeting", "top of hour"])
-
-        params_reset_interval_min = int(preference.get("params_reset_interval_min", max(20, batch_window_min)))
-        params_stand_sec = int(preference.get("params_stand_sec", 45))
-        params_forward_bout_cap_sec = int(preference.get("params_forward_bout_cap_sec", 60))
-        params_wants_habit_break_clause = bool(preference.get("params_wants_habit_break_clause", True))
-        params_wants_anchor_stretch = bool(preference.get("params_wants_anchor_stretch", True))
-
-        prefs_wants_stretch = bool(preference.get("wants_stretch", False))
-        prefs_allowed_stretches = preference.get("allowed_stretches",
-                                                 ["chest opener 2m", "neck release 1m", "hip hinge + gentle extension 2m"])
-
-        prompt_plan = ChatPromptTemplate.from_messages([
-            ("system", sys_plan),
-            ("human", human_plan),
-        ])
+        # ----- 4) SHORT TERM PLAN -----
+        plan_values = _pick(config,
+            "tone_preference",
+            "previous_output.do_this_now",
+            "previous_output.why_this_matters",
+            "previous_output.summary_line",
+            "previous_output.habit_guard_line",
+            "personal.main_discomforts",
+            "personal.key_goal",
+            "recent.dominant_bad_label",
+            "recent.repeated_pattern",
+            "recent.good_pct",
+            "recent.continuous_bad_sec",
+            "recent.repetition_counts",
+            "session.minutes_elapsed",
+            "session.minutes_remaining",
+            "session.anchor_candidates",
+            "params.reset_interval_min",
+            "params.stand_sec",
+            "params.forward_bout_cap_sec",
+            "params.wants_habit_break_clause",
+            "params.wants_anchor_stretch",
+            "prefs.wants_stretch",
+            "prefs.allowed_stretches",
+        )
+        prompt_plan = _make_prompt_from_files("plan", plan_values)
         plan_chain = prompt_plan | self.llm | StrOutputParser()
-        short_term_plan = plan_chain.invoke({
-            "tone_preference": json.dumps(tone_pref, ensure_ascii=False),
-            "previous_output": previous_output,
-            "main_discomforts": json.dumps(pain_flags, ensure_ascii=False),
-            "key_goal": key_goal or "없음",
-            "recent_dominant_bad_label": recent_dominant_bad_label,
-            "recent_repeated_pattern": recent_repeated_pattern,
-            "recent_good_pct": recent_good_pct,
-            "recent_continuous_bad_sec": recent_continuous_bad_sec,
-            "recent_repetition_counts": json.dumps(recent_repetition_counts, ensure_ascii=False),
-            "session_minutes_elapsed": session_minutes_elapsed,
-            "session_minutes_remaining": session_minutes_remaining,
-            "session_anchor_candidates": json.dumps(session_anchor_candidates, ensure_ascii=False),
-            "params_reset_interval_min": params_reset_interval_min,
-            "params_stand_sec": params_stand_sec,
-            "params_forward_bout_cap_sec": params_forward_bout_cap_sec,
-            "params_wants_habit_break_clause": str(params_wants_habit_break_clause),
-            "params_wants_anchor_stretch": str(params_wants_anchor_stretch),
-            "prefs_wants_stretch": str(prefs_wants_stretch),
-            "prefs_allowed_stretches": json.dumps(prefs_allowed_stretches, ensure_ascii=False),
-        }).strip()
+        short_term_plan = plan_chain.invoke({}).strip()
 
         return ToDoBundle(
             do_this_now=do_this_now,
@@ -714,12 +544,13 @@ class _Pipeline:
             short_term_plan=short_term_plan,
         )
 
-    # ----------------- 공개 API ----------------- 
     def run_analysis_and_update(self) -> Dict[str, Any]:
         """
         GUI 타이머/버튼에서 호출 → 분석/요약 수행 후 To-Do 생성, GUI 키로 반환
+        - annotation_supplier()가 있으면 (df_or_path, participant_path) 사용
+        - 아니면 annotation_path를 df/participant 동시 사용
+        - _summarize_once 내부에서 df 보장(_ensure_df) 및 live/batch_window_minutes 포함 반환
         """
-        # 데이터 소스 확보
         if self.annotation_supplier:
             df_or_path, participant_path = self.annotation_supplier()
         elif self.annotation_path:
@@ -732,8 +563,8 @@ class _Pipeline:
         self.posture_summary_text = text
         self.posture_summary_metrics = metrics
 
-        # To-Do
-        todo = self._gen_note(text, metrics, self.preference)
+        # To-Do (파일 기반 프롬프트 + 공통 입력 사용)
+        todo = self._gen_note(metrics, self.preference)
         self.last_todo = todo
 
         return {
@@ -742,20 +573,22 @@ class _Pipeline:
             "Summary and Habit Guard": todo.summary_and_habit_guide,
             "Short Term Plan": todo.short_term_plan,
         }
+
+
     def get_profile_for_participant(self) -> dict:
         """
         preferences JSON에서 현재 user_id의 요약된 채팅 프로필을 구성해 반환.
-        self.preference는 선택된 사용자에 대한 dict라고 가정.
+        chat 템플릿의 profile.* 토큰을 채우는 데 사용.
         """
         p = self.preference or {}
-        # 톤/상호작용/가이던스 기본값
+
         tone_pref = p.get("tone_preference", [])
         chat_interaction = p.get("chat_interaction", "conversational")
         guidance_style = p.get("guidance_style", "unspecified")
-        # 개인 목표/불편
+
         goals = p.get("key_goal") or p.get("goal") or None
         discomforts = p.get("pain_flags") or p.get("discomforts") or []
-        # 설정 의도/모달리티/알림/신뢰/프라이버시
+
         config_intentions = p.get("config_intentions", [])
         feedback_modalities = p.get("feedback_modalities", ["text_notification"])
         alert_rule = p.get("alert_rule", "unspecified")
@@ -775,46 +608,65 @@ class _Pipeline:
             "privacy_sensing": privacy_sensing,
         }
 
+
     def get_previous_outputs_bundle(self) -> dict:
         """
         최근 To-Do 결과(self.last_todo)를 채팅 컨텍스트 형태로 변환.
+        chat 템플릿의 previous_outputs.* 토큰을 채우는 데 사용.
         """
         t = self.last_todo
+        summary_line = ""
+        habit_guard_line = None
+        plan_line = ""
+        stretch_line = None
+
+        if t and t.summary_and_habit_guide:
+            lines = [ln for ln in t.summary_and_habit_guide.split("\n") if ln.strip()]
+            if len(lines) >= 1:
+                summary_line = lines[0]
+            if len(lines) >= 2:
+                habit_guard_line = lines[1]
+
+        if t and t.short_term_plan:
+            plines = [ln for ln in t.short_term_plan.split("\n") if ln.strip()]
+            if len(plines) >= 1:
+                plan_line = plines[0]
+            if len(plines) >= 2:
+                stretch_line = plines[1]
+
         return {
-            "do_this_now": t.do_this_now if t else "",
-            "why_this_matters": t.why_this_matters if t else "",
-            "summary_line": (t.summary_and_habit_guide.split("\n")[0] if t and t.summary_and_habit_guide else ""),
-            "habit_guard_line": (
-                t.summary_and_habit_guide.split("\n")[1]
-                if t and t.summary_and_habit_guide and "\n" in t.summary_and_habit_guide else None
-            ),
+            "do_this_now": (t.do_this_now if t else ""),
+            "why_this_matters": (t.why_this_matters if t else ""),
+            "summary_line": summary_line,
+            "habit_guard_line": habit_guard_line,
             "session_plan": {
-                "plan_line": (t.short_term_plan.split("\n")[0] if t and t.short_term_plan else ""),
-                "stretch_line": (
-                    t.short_term_plan.split("\n")[1]
-                    if t and t.short_term_plan and "\n" in t.short_term_plan else None
-                ),
-            }
+                "plan_line": plan_line,
+                "stretch_line": stretch_line,
+            },
         }
+
 
     def get_history_summary_for_chat(self) -> dict:
         """
-        분석에서 만든 지표(self.posture_summary_metrics)로 채팅 요약 컨텍스트 생성.
+        분석 지표(self.posture_summary_metrics)로 채팅 히스토리 컨텍스트 생성.
+        chat 템플릿의 history.* 토큰을 채우는 데 사용.
         """
         m = self.posture_summary_metrics or {}
-        core = m.get("core", {}) or {}
-        dom  = m.get("dominance_top", {}) or {}
-        motifs = m.get("motif_summary", {}) or {}
+        core = m.get("core") or {}
+        dom = m.get("dominance_top") or {}
+        motifs = m.get("motif_summary") or {}
 
         baseline_good_pct = core.get("Good posture time (%)")
+
         dominant_labels = []
-        if dom.get("top_time_label"): dominant_labels.append(dom["top_time_label"])
+        if dom.get("top_time_label"):
+            dominant_labels.append(dom["top_time_label"])
         if dom.get("top_repetition_label") and dom["top_repetition_label"] not in dominant_labels:
             dominant_labels.append(dom["top_repetition_label"])
 
-        l3_top = motifs.get("L3", {}).get("most_repeated_sequence")
-        l2_top = motifs.get("L2", {}).get("most_repeated_sequence")
-        top_sequences = [s for s in [l3_top, l2_top] if s]
+        l3_top = (motifs.get("L3") or {}).get("most_repeated_sequence")
+        l2_top = (motifs.get("L2") or {}).get("most_repeated_sequence")
+        top_sequences = [s for s in (l3_top, l2_top) if s]
 
         return {
             "baseline_good_pct": baseline_good_pct,
@@ -822,86 +674,75 @@ class _Pipeline:
             "top_sequences": top_sequences,
         }
 
+
     def get_runtime_prefs_for_chat(self) -> dict:
         """
-        런타임 옵션(스트레치 허용 등). self.preference에서 파생하거나 별도 상태를 쓸 수 있음.
+        런타임 옵션(스트레치 허용 등). chat 템플릿의 prefs.* 토큰을 채우는 데 사용.
         """
         p = self.preference or {}
         wants_stretch = bool(p.get("wants_stretch", False))
-        allowed = p.get("allowed_stretches", ["chest_opener","neck_release","hip_hinge_extension"])
-        return {"wants_stretch": wants_stretch, "allowed_stretches": allowed}
+        allowed = p.get("allowed_stretches", ["chest_opener", "neck_release", "hip_hinge_extension"])
+        return {
+            "wants_stretch": wants_stretch,
+            "allowed_stretches": allowed,
+        }
+
 
     def chat_once(self, user_message: str) -> AIMessage:
         """
-        GUI의 채팅 입력을 받아 LLM 답변(AIMessage) 반환
-        - 단일 System 프롬프트 + User 템플릿
-        - 참가자별 메모리 유지(요약)
+        GUI 채팅 입력 → 파일 기반(system/user) 프롬프트 + 요약 메모리로 LLM 호출
         """
         if self.llm is None:
             raise RuntimeError("LLM is not initialized. Call configure_llm(...) first.")
         self.ensure_memory()
 
-        # 1) 프롬프트 파일 로드 (PLACEHOLDER)
-        system_prompt_text = _read_text(ASK_ME_CHAT_SYSTEM_PROMPT)
-        user_template_text = _read_text(ASK_ME_CHAT_USER_TEMPLATE)
+        profile = self.get_profile_for_participant()
+        prev_outputs = self.get_previous_outputs_bundle()
+        history = self.get_history_summary_for_chat()
+        prefs = self.get_runtime_prefs_for_chat()
 
-        # 2) 이 참가자 컨텍스트 구성
-        profile = self.get_profile_for_participant()               # dict
-        prev_outputs = self.get_previous_outputs_bundle()          # dict: {do_this_now, why_this_matters, ...}
-        history = self.get_history_summary_for_chat()              # dict: {baseline_good_pct, dominant_labels, ...}
-        prefs   = self.get_runtime_prefs_for_chat()                # dict: {wants_stretch, allowed_stretches, ...}
+        def _flatten(prefix: str, obj, out: Dict[str, Any]):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    _flatten(f"{prefix}.{k}" if prefix else k, v, out)
+            else:
+                out[prefix] = obj
+            return out
 
-        payload = {
-            "question": user_message,
-            "profile": profile,
-            "previous_outputs": prev_outputs,
-            "history": history,
-            "prefs": prefs,
-        }
-        user_filled_template = _fill_user_template(user_template_text, payload)
+        user_values: Dict[str, Any] = {"question": user_message}
+        _flatten("profile", profile, user_values)
+        _flatten("previous_outputs", prev_outputs, user_values)
+        _flatten("history", history, user_values)
+        _flatten("prefs", prefs, user_values)
 
-        # 3) 메모리(요약) 불러와 앞에 붙이기
+        prompt = _make_prompt_from_files("chat", user_values)
+
         prior = self.memory.load_memory_variables({}).get("history", [])
-        # ChatPromptTemplate: 단일 system + 단일 human
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", "{system_prompt}"),
-            ("human", "{user_filled_template}")
-        ])
         messages = []
         if isinstance(prior, list):
             messages.extend(prior)
         elif prior:
             messages.append(SystemMessage(content=str(prior)))
-        messages.extend(
-            prompt.format_messages(system_prompt=system_prompt_text,
-                                user_filled_template=user_filled_template)
-        )
+        messages.extend(prompt.format_messages())
 
-        # 4) 호출
         resp = self.llm.invoke(messages)
         ai_text = getattr(resp, "content", str(resp)).strip()
 
-        # 5) 사후 규격 강제: 정확히 2줄, 각 줄 ≤ 24 단어
         lines = [ln.strip() for ln in ai_text.splitlines() if ln.strip()]
-        if len(lines) < 2:  # 2줄 보장
-            lines = (lines + ["(follow-up omitted)"])[:2]
-        lines = [_clip_words(ln, 24) for ln in lines[:2]]
         final = "\n".join(lines)
 
-        # 6) 메모리에 저장 (LangChain 관례 키: human/ai)
         self.memory.save_context(inputs={"human": user_message}, outputs={"ai": final})
 
         return AIMessage(content=final)
 
 _PIPE = _Pipeline()
 
-# ================= 외부 공개 함수 (GUI에서 호출) ================= # To Hyun-jin : 여기 쓰면 됩니다.
-
-def configure_llm(llm=None, *, openai_model: Optional[str]=None, temperature: float=0.3):
+# ================= GUI-facing wrapper functions ================= # To Hyun-jin : 여기 쓰면 됩니다.
+def configure_llm(llm=None, *, openai_model: Optional[str] = None, temperature: float = 0.3):
     """
-    LLM 설정 (선택)
+    LLM 설정
     - llm: LangChain ChatModel 객체 직접 주입
-    - openai_model: "gpt-4o-mini" 등 모델명으로 생성
+    - openai_model: "gpt-4o-mini" 등 모델명으로 생성 (temperature 반영)
     """
     global _PIPE
     if llm is not None:
@@ -937,7 +778,9 @@ def set_user_preference(pref: Dict[str, Any]):
 def set_annotation_source(path_or_supplier):
     """
     - str 경로를 주면 그 파일(xlsx/csv)을 사용
-    - 콜러블을 주면 매 호출 시 (df_or_path, optional_participant_path)를 반환해야 함
+    - 콜러블을 주면 매 호출 시 (df, optional_participant_path)를 반환해야 함
+      * df: pandas.DataFrame 또는 xlsx/csv 경로 문자열
+      * optional_participant_path: 패턴 분석용 xlsx 경로(없으면 None)
     """
     global _PIPE
     if isinstance(path_or_supplier, str):
@@ -960,9 +803,93 @@ def get_analysis_data() -> Dict[str, Any]:
 def get_chat_response(user_message: str, _chat_history_from_gui=None) -> AIMessage | Dict[str, Any]:
     """
     GUI LLMWorker.run_chat()에서 호출.
-    반환은 AIMessage
+    반환은 AIMessage (실패 시 {"error": "..."} 딕셔너리)
     """
     try:
         return _PIPE.chat_once(user_message)
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
+
+### CODE SNIPPET FOR HYUNJIN ###
+# from posture_pipeline import (
+#     configure_llm, load_preferences_json, select_user, set_annotation_source,
+#     get_analysis_data, get_chat_response,
+#     select_user, set_user_preference,
+#     set_annotation_source,
+#     configure_llm
+# )
+
+
+# def app_boot():
+#     # 1) LLM 설정
+#     configure_llm(openai_model="gpt-4o-mini", temperature=0.3)
+
+#     # 2) 환경설정 JSON 로드
+#     load_preferences_json("./data/user_preferences.json")
+
+#     # 3) 초기 사용자 선택
+#     select_user("default_user")
+
+#     # 4) 데이터 소스 지정 (파일 경로 or supplier 콜러블)
+#     #   - 파일 경로로 지정할 때:
+#     set_annotation_source("./data/sample_annotations.xlsx")
+
+#     #   - 또는 콜러블로 지정할 때(선택):
+#     # def annotation_supplier():
+#     #     # (DataFrame 또는 경로, optional_participant_path) 튜플
+#     #     return "./data/sample_annotations.xlsx", "./data/sample_annotations.xlsx"
+#     # set_annotation_source(annotation_supplier)
+
+# def on_click_analyze():
+#     result = get_analysis_data()
+#     if "error" in result:
+#         gui.show_error(result["error"])
+#         return
+
+#     # GUI 반영 (원하는 위젯 id/함수에 맞게 연결)
+#     gui.set_text("do_now_label",       result["Do this now"])
+#     gui.set_text("why_label",          result["Why this matters"])
+#     gui.set_text("summary_label",      result["Summary and Habit Guard"])
+#     gui.set_text("plan_label",         result["Short Term Plan"])
+
+# def on_click_send_chat():
+#     user_msg = gui.get_text("chat_input")
+#     resp = get_chat_response(user_msg)
+
+#     if isinstance(resp, dict) and "error" in resp:
+#         gui.show_error(resp["error"])
+#         return
+
+#     # resp는 AIMessage
+#     gui.append_chat(role="user", text=user_msg)
+#     gui.append_chat(role="assistant", text=resp.content)
+#     gui.clear("chat_input")
+
+# def on_user_changed(new_user_id: str):
+#     select_user(new_user_id)
+
+
+# def on_preferences_changed(prefs: dict):
+#     """
+#     prefs 예시:
+#     {
+#       "tone_preference": ["motivational_encouraging"],
+#       "guidance_style": "facilitative",
+#       "wants_stretch": True,
+#       "allowed_stretches": ["chest_opener","neck_release"],
+#       "params_T_sec": 90,
+#       ...
+#     }
+#     """
+#     set_user_preference(prefs)
+
+
+# def on_pick_annotation_file(path: str):
+#     # xlsx/csv 파일 경로
+#     set_annotation_source(path)
+#     # 필요시 즉시 재분석
+#     # on_click_analyze()
+
+# def on_model_changed(model_name: str, temperature: float):
+#     configure_llm(openai_model=model_name, temperature=temperature)
+#############################################################################################
