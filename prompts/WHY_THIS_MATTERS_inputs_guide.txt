@@ -1,0 +1,48 @@
+==============================================================
+WHY_THIS_MATTERS — Inputs & How to Use
+Version: 1.0 (2025-08-14)
+==============================================================
+
+Provide this block with each call (YAML/JSON-like is fine):
+
+tone_preference: []            # [] → neutral tone; ["motivational_encouraging"] → encouraging
+live:
+  current_label: "FORWARD"     # latest detected label at trigger time
+
+batch_window_minutes: 10
+batch_summary:
+  top_time_label: "BACK"       # label with longest time in the window
+  top_time_minutes: 19.47
+  top_repetition_label: "FORWARD"
+  top_repetition_count: 32
+  bad_pct: 99.93               # percent of time in non-neutral postures
+
+personal:
+  main_discomforts: ["lower back pain"]  # optional; can be []
+  key_goal: "reduce neck stiffness"      # optional; can be null
+  improvement_timeframe: "this month"    # optional; e.g., "4–6 weeks", "this month", or null
+
+Model behavior
+- Uses goal or discomfort first; if none, uses a neutral benefit (“stay comfortable and focused”).
+- Adds a compact evidence phrase from current/batch labels, like “(recent FORWARD 32×/10 min)” or “(BACK 19.5 min)”. 
+- Keeps to ONE sentence, friendly, no fear language.
+
+Copy-paste minimal example
+tone_preference: []
+live:
+  current_label: "FORWARD"
+batch_window_minutes: 10
+batch_summary:
+  top_time_label: "BACK"
+  top_time_minutes: 19.47
+  top_repetition_label: "FORWARD"
+  top_repetition_count: 32
+  bad_pct: 99.93
+personal:
+  main_discomforts: ["lower back pain"]
+  key_goal: null
+  improvement_timeframe: "this month"
+
+Expected output (one sentence):
+  “This supports your lower back—correcting forward lean helps ease tension (recent FORWARD 32×/10 min) this month.”
+==============================================================

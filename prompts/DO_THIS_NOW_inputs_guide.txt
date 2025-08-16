@@ -1,0 +1,110 @@
+==============================================================
+DO_THIS_NOW — Inputs & How to Use
+Version: 1.2 (2025-08-14)
+==============================================================
+
+What you provide to the model (recommended as a YAML/JSON-like block in the user message):
+
+tone_preference: []            # empty → neutral tone
+guidance_style: "prescriptive" # or "facilitative" | "mixed" | "unspecified"
+
+live:
+  current_label: "FORWARD"     # one of: UPRIGHT, UPRIGHT_LEFT, UPRIGHT_RIGHT, FORWARD,
+                               # FORWARD_LEFT, FORWARD_RIGHT, BACK, BACK_LEFT, BACK_RIGHT
+  continuous_seconds_current_label: 140
+
+batch_window_minutes: 10
+batch_summary:
+  top_time_label: "BACK"
+  top_time_minutes: 19.47
+  top_repetition_label: "FORWARD"
+  top_repetition_count: 32
+  good_minutes: 0.04
+  bad_minutes: 56.83
+  good_pct: 0.07
+  bad_pct: 99.93
+
+personal:
+  main_discomforts: ["neck stiffness"]  # optional; can be []
+  key_goal: "reduce neck stiffness"     # optional; can be null
+
+----------------------------------------
+How it works
+- The model picks tone based on tone_preference (empty → neutral).
+- It maps current_label to a direction‑specific micro‑reset instruction.
+- It chooses duration:
+  • (45s) if continuous_seconds_current_label ≥ 120 OR top_repetition_count ≥ 3
+  • (30s) if bad_pct ≥ 80
+  • (20s) otherwise
+- If current_label == "UPRIGHT", it outputs a short maintenance line.
+- Output is exactly ONE line, max ~20 words, ending with the duration.
+
+----------------------------------------
+Minimal examples you can paste
+
+1) Severe forward pattern (strict neutral by default)
+tone_preference: []
+guidance_style: "prescriptive"
+live:
+  current_label: "FORWARD"
+  continuous_seconds_current_label: 140
+batch_window_minutes: 10
+batch_summary:
+  top_time_label: "BACK"
+  top_time_minutes: 19.47
+  top_repetition_label: "FORWARD"
+  top_repetition_count: 5
+  good_minutes: 0.04
+  bad_minutes: 56.83
+  good_pct: 0.07
+  bad_pct: 99.93
+personal:
+  main_discomforts: []
+  key_goal: null
+
+2) Motivational recline case
+tone_preference: ["motivational_encouraging"]
+guidance_style: "prescriptive"
+live:
+  current_label: "BACK"
+  continuous_seconds_current_label: 70
+batch_window_minutes: 5
+batch_summary:
+  top_time_label: "BACK"
+  top_time_minutes: 8.1
+  top_repetition_label: "BACK"
+  top_repetition_count: 2
+  good_minutes: 1.2
+  bad_minutes: 8.8
+  good_pct: 12
+  bad_pct: 88
+personal:
+  main_discomforts: []
+  key_goal: null
+
+3) Upright maintenance
+tone_preference: []
+guidance_style: "prescriptive"
+live:
+  current_label: "UPRIGHT"
+  continuous_seconds_current_label: 30
+batch_window_minutes: 5
+batch_summary:
+  top_time_label: "UPRIGHT"
+  top_time_minutes: 4.3
+  top_repetition_label: "UPRIGHT"
+  top_repetition_count: 1
+  good_minutes: 4.3
+  bad_minutes: 0.7
+  good_pct: 86
+  bad_pct: 14
+personal:
+  main_discomforts: []
+  key_goal: null
+
+----------------------------------------
+Notes
+- You may omit the “personal” block if unavailable.
+- If any batch fields are missing, the model defaults to (20s).
+- Keep labels uppercase as listed to avoid mapping errors.
+==============================================================

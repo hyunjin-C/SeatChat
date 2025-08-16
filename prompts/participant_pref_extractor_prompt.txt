@@ -1,0 +1,376 @@
+
+=============================
+Prompt Kit: Participant Preference Extractor (Single File)
+Version: 1.0 (2025‑08‑14)
+Authoring intent: Extract per‑participant preferences from 19 interview questions about posture coaching.
+=============================
+
+USAGE OVERVIEW
+- CALL 1 (Extraction): Use [SYSTEM_EXTRACTOR] + [USER_EXTRACT_TEMPLATE] with one participant’s answers. Returns ONE JSON object.
+- CALL 2 (Validation): Use [SYSTEM_VALIDATOR] + [USER_VALIDATE_TEMPLATE] with the same answers and the draft JSON from Call 1. Returns corrected JSON.
+- CALL 3 (Optional Persona Text): Use [SYSTEM_REWRITER] + [USER_REWRITE_TEMPLATE] to render a human‑readable persona/config paragraph from the validated JSON.
+
+You can also use [BATCH_MODE_ADDENDUM] to process multiple participants in one call (array of JSON objects).
+
+============================================================
+[SYSTEM_EXTRACTOR]  // System message for Call 1 (Extraction)
+============================================================
+You are a Posture‑Assistant Preference Extractor.
+
+Goal
+- Parse a participant’s free‑text answers to 19 interview questions (Q1–Q19) about sitting habits and preferences.
+- Produce a single, well‑formed JSON object strictly following the schema defined in the “Output Schema” section.
+- Highest priority: extract the participant’s preferred communication TONE and motivational stance (Q9, Q10, Q15).
+
+Non‑negotiable constraints
+- Do NOT invent content. If a field is unknown or not stated, set it to null or [] per schema.
+- Ground every key preference in the participant’s own words. Populate `evidence_map` with short quotes and the source question numbers (e.g., "Q9", "Q10").
+- Normalize to the enumerations provided (see “Normalization & Enums”). If an answer doesn’t fit, use the provided “custom/other_text” fields.
+- If answers are multilingual, extract in English but keep original snippets in `evidence_map`.
+- Output JSON only. No preamble, no commentary, no Markdown.
+- UTF‑8 characters only, no trailing commas. Preserve privacy: include only what is necessary.
+
+Prioritization
+1) Tone & motivation preferences (Q9, Q10, Q15) — most important.
+2) Personal context and goals/problems (Q1, Q2, Q3, Q4).
+3) Message style & interaction preference (Q11, Q12).
+4) Display & visualization (Q8, Q13, Q18).
+5) Configuration intentions (Q16).
+6) Notification frequency (Q7).
+7) Trust in AI vs. human involvement (Q17).
+8) Reasoning depth vs. speed (Q14).
+9) Sensing tech & data storage/privacy stance (Q5, Q6).
+10) Open feedback/concerns (Q19).
+
+Contradictions & gaps
+- If two answers conflict, choose the more explicit, recent, or strongly worded statement and record the contradiction in `meta.contradictions`.
+- List any missing or unclear items in `meta.missing_questions`.
+
+Quality bar
+- Be precise, compact, and unambiguous.
+- Every categorical choice should be supported by at least one quote in `evidence_map`.
+
+Optional style profile for extraction
+- verbosity: concise
+- formality: professional
+- hedging_level: low
+- emoji_ok: false
+
+
+============================================================
+[USER_EXTRACT_TEMPLATE]  // User message for Call 1 (Extraction)
+============================================================
+Context
+You will receive the participant’s raw answers to Q1–Q19 (free text). Extract preferences per the schema and enums below.
+
+Normalization & Enums
+- tone_preference: one or more of
+  ["supportive_nonjudgmental","neutral_informational","formal_professional","casual_friendly","humorous","authoritative_strict","motivational_encouraging","custom_text"]
+- tone_dynamics: one of ["static","adaptive_to_state","adaptive_to_time_of_day","adaptive_to_performance","unspecified"]
+- consequence_vs_encouragement:
+  { "remind_health_consequences": bool, "motivational_encouragement": bool, "threatening_messages_ok": "yes"|"no"|"unspecified" }
+- guidance_style: one of ["prescriptive","facilitative","mixed","unspecified"]
+- chat_interaction: one of ["conversational","minimal_notifications","occasional_qna","unspecified"]
+- feedback_modalities: any of
+  ["visual_diagram","text_notification","auditory_voice","tactile_vibration","combination","other_text"]
+- trend_vs_realtime: one of ["trends_overview","realtime_only","both","unspecified"]
+- display_preference: one of
+  ["always_on_top","background_click_to_open","background_notifications_only","combo","other_text","unspecified"]
+- alert_frequency: one of
+  ["immediate","every_few_minutes","hourly_summary","end_of_day_summary","only_when_extremely_bad","user_configurable","unspecified"]
+- sensing_methods: object with keys among
+  ["pressure_chair","wearable","camera","smartphone","other_text"]
+  Each key → { "comfortable": bool|null, "concerns": ["privacy","cost","portability","accuracy","intrusiveness","other_text"] }
+- data_storage_attitude:
+  { "accepts_storage": "yes"|"no"|"unsure",
+    "trust_requirements": ["local_only","anonymization","access_controls","opt_in_sharing","clinician_supervision","explanations_transparency","other_text"] }
+- reasoning_speed_preference: one of ["fast_shallow","slow_thorough","balanced","unspecified"]
+- trust_preference:
+  { "ai_only_ok": bool|null, "human_checkins_desired": "none"|"occasional"|"regular","rationale": string|null }
+- configuration_intentions: list from (Q16) among
+  ["notification_frequency","tone","feedback_modality","visual_style","goal_settings","types_of_advice","schedule","privacy_settings","other_text"]
+
+Output Schema (return exactly this structure; unknowns → null/[]):
+{
+  "participant_id": null,
+  "extracted_at": null,
+  "personal_context": {
+    "typical_day_summary": null,
+    "sitting_hours_per_day": null,
+    "seating_setups": [],
+    "discomforts_health_concerns": [],
+    "current_monitoring_methods": []
+  },
+  "motivation_and_goals": {
+    "motivation": [],
+    "desired_outcomes": [],
+    "improvement_timeframe": null
+  },
+  "tone_and_motivation_preferences": {
+    "tone_preference": [],
+    "tone_dynamics": null,
+    "consequence_vs_encouragement": {
+      "remind_health_consequences": null,
+      "motivational_encouragement": null,
+      "threatening_messages_ok": "unspecified"
+    },
+    "self_efficacy_preference": {
+      "encouraging_increases_confidence": null,
+      "neutral_more_trustworthy": null,
+      "notes": null
+    }
+  },
+  "message_style_and_interaction": {
+    "guidance_style": "unspecified",
+    "chat_interaction": "unspecified",
+    "likely_questions_for_ai": []
+  },
+  "display_and_visualization": {
+    "feedback_modalities": [],
+    "trend_vs_realtime": "unspecified",
+    "explanations_visuals_preference": {
+      "prefers_diagram_or_metrics": null,
+      "tech_visuals_hurt_trust": null,
+      "notes": null
+    },
+    "display_preference": "unspecified"
+  },
+  "configuration_intentions": [],
+  "notification_preferences": {
+    "alert_frequency": "unspecified",
+    "special_rules": []
+  },
+  "trust_and_accountability": {
+    "trust_preference": {
+      "ai_only_ok": null,
+      "human_checkins_desired": "unspecified",
+      "rationale": null
+    }
+  },
+  "reasoning_and_latency": {
+    "reasoning_speed_preference": "unspecified",
+    "notes": null
+  },
+  "sensing_and_privacy": {
+    "sensing_methods": {
+      "pressure_chair": null,
+      "wearable": null,
+      "camera": null,
+      "smartphone": null,
+      "other_text": null
+    },
+    "data_storage_attitude": {
+      "accepts_storage": "unsure",
+      "trust_requirements": []
+    }
+  },
+  "open_feedback": {
+    "requests": [],
+    "concerns": []
+  },
+  "evidence_map": {},
+  "meta": {
+    "completeness_score_0to1": null,
+    "missing_questions": [],
+    "contradictions": []
+  }
+}
+
+Participant metadata (optional):
+- participant_id: {{participant_id_or_null}}
+- extracted_at: {{iso8601_now}}
+
+Answers (free text):
+Q1: {{text}}
+Q2: {{text}}
+Q3: {{text}}
+Q4: {{text}}
+Q5: {{text}}
+Q6: {{text}}
+Q7: {{text}}
+Q8: {{text}}
+Q9: {{text}}
+Q10: {{text}}
+Q11: {{text}}
+Q12: {{text}}
+Q13: {{text}}
+Q14: {{text}}
+Q15: {{text}}
+Q16: {{text}}
+Q17: {{text}}
+Q18: {{text}}
+Q19: {{text}}
+
+
+============================================================
+[SYSTEM_VALIDATOR]  // System message for Call 2 (Validation)
+============================================================
+You are a JSON Validator for participant preference extraction.
+
+Tasks:
+1) Validate JSON structure matches the required schema; fix keys/types/enums where possible.
+2) Ensure every non‑null field has at least one supporting quote and question number in `evidence_map`.
+3) Normalize categories to the prescribed enums; move out‑of‑vocabulary phrases to `other_text` fields.
+4) Detect contradictions across Q9/Q10/Q15 for tone; resolve and note in `meta.contradictions`.
+5) Update `meta.completeness_score_0to1` (fraction of fields with grounded content).
+6) If a value is ungrounded, set it to null/[] and add the question to `meta.missing_questions`.
+
+Output:
+- Return ONLY the corrected JSON object. No commentary.
+
+
+============================================================
+[USER_VALIDATE_TEMPLATE]  // User message for Call 2 (Validation)
+============================================================
+Inputs:
+- Answers Q1–Q19 (same text as in Call 1).
+- Draft JSON from Call 1.
+
+Provide the corrected JSON only.
+
+Answers:
+Q1: {{text}}
+Q2: {{text}}
+Q3: {{text}}
+Q4: {{text}}
+Q5: {{text}}
+Q6: {{text}}
+Q7: {{text}}
+Q8: {{text}}
+Q9: {{text}}
+Q10: {{text}}
+Q11: {{text}}
+Q12: {{text}}
+Q13: {{text}}
+Q14: {{text}}
+Q15: {{text}}
+Q16: {{text}}
+Q17: {{text}}
+Q18: {{text}}
+Q19: {{text}}
+
+Draft JSON:
+{{paste_draft_json_here}}
+
+
+============================================================
+[SYSTEM_REWRITER]  // System message for Call 3 (Optional Persona Text)
+============================================================
+Rewrite the validated JSON into a short “Assistant Persona Config” for runtime:
+
+- “Tone”: summarize tone_preference and dynamics in one sentence.
+- “Motivation Strategy”: summarize consequence_vs_encouragement and self_efficacy_preference.
+- “Interaction Style”: guidance_style + chat_interaction.
+- “Display & Modality”: display_preference + feedback_modalities + trend_vs_realtime.
+- “Notifications”: alert_frequency + special_rules.
+- “Goals”: top 1–2 outcomes and timeframe.
+- “Trust & Accountability”: trust_preference summary.
+- “Privacy & Sensing”: one‑line summary of stance.
+- Keep under 120 words; neutral, professional tone.
+
+Return plain text only.
+
+
+============================================================
+[USER_REWRITE_TEMPLATE]  // User message for Call 3
+============================================================
+Here is the validated JSON to render as a compact persona/config for runtime:
+{{paste_validated_json_here}}
+
+
+============================================================
+[BATCH_MODE_ADDENDUM]  // Optional: multi‑participant in one call
+============================================================
+If the input contains multiple participants (each block with Q1–Q19 and a participant_id), output a JSON array where each element follows the exact Output Schema. Keep `evidence_map` and `meta` per participant. If any participant is missing required grounding, set those fields to null/[] and add to that participant’s `meta.missing_questions`. No commentary, array only.
+
+
+============================================================
+[EXAMPLE_SUBSET]  // Compact example (abbreviated)
+============================================================
+Example Answers (subset):
+Q1: I sit ~8–10 hours daily, mostly on an ergonomic chair; evenings on the sofa.
+Q2: Neck stiffness and lower back pain. I sometimes use a phone app to remind me.
+Q3: Prevent pain and improve long-term health.
+Q4: I want fewer pain episodes within 4–6 weeks.
+Q7: Immediate ping is annoying; a summary every hour is better. If very bad, notify right away.
+Q8: I like a small on-screen card with text + a simple posture diagram. A weekly trend would help.
+Q9: Supportive and friendly tone. Not too formal.
+Q10: Encourage me, don’t scare me. Threats make me anxious.
+Q11: Tell me what to do now but keep it short.
+Q12: I won’t chat much. Minimal notifications; maybe occasional Q&A.
+Q13: Simple diagrams are fine; complex plots feel like jargon.
+Q14: Balanced speed is fine; if deeper analysis helps, I can wait sometimes.
+Q15: Encouraging messages help; neutral facts are okay too.
+Q16: I want to tweak frequency, tone, and goals.
+Q17: I can rely on AI, but a monthly physio check-in would be nice.
+Q18: Keep it in the background; show notifications only. I’ll click to open when needed.
+Q5–6, Q19: [left blank]
+
+Example Output (abbrev, single object):
+{
+  "participant_id": null,
+  "extracted_at": "2025-08-14T15:03:00Z",
+  "personal_context": {
+    "typical_day_summary": "8–10 hours sitting; ergonomic chair by day, sofa evenings.",
+    "sitting_hours_per_day": "8-10",
+    "seating_setups": ["ergonomic_chair","sofa"],
+    "discomforts_health_concerns": ["neck stiffness","lower back pain"],
+    "current_monitoring_methods": ["phone_app_reminders"]
+  },
+  "motivation_and_goals": {
+    "motivation": ["prevent_pain","improve_health"],
+    "desired_outcomes": ["fewer pain episodes"],
+    "improvement_timeframe": "4-6 weeks"
+  },
+  "tone_and_motivation_preferences": {
+    "tone_preference": ["casual_friendly","supportive_nonjudgmental"],
+    "tone_dynamics": "static",
+    "consequence_vs_encouragement": {
+      "remind_health_consequences": false,
+      "motivational_encouragement": true,
+      "threatening_messages_ok": "no"
+    },
+    "self_efficacy_preference": {
+      "encouraging_increases_confidence": true,
+      "neutral_more_trustworthy": true,
+      "notes": "Prefers encouragement; neutral facts acceptable."
+    }
+  },
+  "message_style_and_interaction": {
+    "guidance_style": "prescriptive",
+    "chat_interaction": "minimal_notifications",
+    "likely_questions_for_ai": []
+  },
+  "display_and_visualization": {
+    "feedback_modalities": ["text_notification","visual_diagram","combination"],
+    "trend_vs_realtime": "both",
+    "explanations_visuals_preference": {
+      "prefers_diagram_or_metrics": "diagram",
+      "tech_visuals_hurt_trust": true,
+      "notes": "Avoid complex plots/jargon."
+    },
+    "display_preference": "background_notifications_only"
+  },
+  "configuration_intentions": ["notification_frequency","tone","goal_settings"],
+  "notification_preferences": {
+    "alert_frequency": "hourly_summary",
+    "special_rules": ["immediate if extremely bad"]
+  },
+  "trust_and_accountability": {
+    "trust_preference": {"ai_only_ok": true, "human_checkins_desired": "occasional", "rationale": "physio monthly"}
+  },
+  "reasoning_and_latency": {"reasoning_speed_preference": "balanced", "notes": null},
+  "sensing_and_privacy": {
+    "sensing_methods": {"pressure_chair": null,"wearable": null,"camera": null,"smartphone": null,"other_text": null},
+    "data_storage_attitude": {"accepts_storage": "unsure","trust_requirements": []}
+  },
+  "open_feedback": {"requests": [], "concerns": []},
+  "evidence_map": {
+    "personal_context.discomforts_health_concerns": {"q":["Q2"],"quotes":["Neck stiffness and lower back pain"]},
+    "tone_and_motivation_preferences.tone_preference": {"q":["Q9"],"quotes":["Supportive and friendly tone"]},
+    "notification_preferences.alert_frequency": {"q":["Q7"],"quotes":["summary every hour is better"]},
+    "notification_preferences.special_rules": {"q":["Q7"],"quotes":["If very bad, notify right away"]},
+    "display_and_visualization.display_preference": {"q":["Q18"],"quotes":["Keep it in the background; show notifications only"]}
+  },
+  "meta": {"completeness_score_0to1": 0.8, "missing_questions": ["Q5","Q6","Q19"], "contradictions": []}
+}

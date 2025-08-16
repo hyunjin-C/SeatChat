@@ -1,0 +1,74 @@
+==============================================================
+SUMMARY_HABIT_GUARD — Inputs & How to Use
+Version: 1.0 (2025-08-14)
+==============================================================
+
+Provide this block (YAML/JSON-like) with each call:
+
+tone_preference: []                   # [] → neutral; ["motivational_encouraging"] or ["authoritative_strict"]
+
+history:
+  good_pct: 40                        # participant’s baseline good posture percentage
+  top_repeated_sequence: "FORWARD LEFT → FORWARD"  # from habitual data (optional)
+
+recent:
+  window_min: 10
+  good_pct: 22
+  top_labels:
+    - label: "FORWARD LEFT"
+      count: 3
+      avg_seconds: 70
+    - label: "BACK"
+      count: 1
+      avg_seconds: 40
+  continuous_bad_sec: 140
+  most_repeated_sequence: "FORWARD LEFT → FORWARD" # if derived from recent sequence analysis
+  repetition:
+    FORWARD LEFT: 3
+    FORWARD: 1
+
+params:
+  N: 3
+  M: 20
+  T_sec: 120
+  delta_pct_threshold: 5
+  suggest_stand_break: true
+  stand_sec: 45
+
+How it renders
+- Line 1 always prints: “Last {window} min: neutral {good_pct}% (vs baseline {↑/↓/≈ diff}); top: label ×count (avg secs), …”
+- Line 2 prints only if any trigger is true:
+  • continuous_bad_sec ≥ T_sec
+  • or repetition[label] ≥ N within M minutes
+  • or most_repeated_sequence == history.top_repeated_sequence
+  • or good_pct ≤ history.good_pct − delta_pct_threshold
+- Micro-break and micro-reset are chosen per params and the most problematic label.
+
+Minimal example you can paste:
+tone_preference: ["motivational_encouraging"]
+history:
+  good_pct: 35
+  top_repeated_sequence: "FORWARD → BACK"
+recent:
+  window_min: 10
+  good_pct: 24
+  top_labels:
+    - label: "FORWARD"
+      count: 4
+      avg_seconds: 65
+  continuous_bad_sec: 130
+  most_repeated_sequence: "FORWARD → BACK"
+  repetition:
+    FORWARD: 4
+params:
+  N: 3
+  M: 20
+  T_sec: 120
+  delta_pct_threshold: 5
+  suggest_stand_break: true
+  stand_sec: 45
+
+Expected two-line output:
+  Last 10 min: neutral 24% (vs baseline ↓−11%); top: FORWARD ×4 (avg 65s).
+  Pattern repeating: FORWARD → BACK. Stand 45s, then sit back; ears over shoulders.
+==============================================================

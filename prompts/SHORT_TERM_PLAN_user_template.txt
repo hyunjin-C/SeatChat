@@ -1,0 +1,79 @@
+tone_preference: <<FILL: tone_preference>>
+
+# Inputs from previous boxes (use the literal text that was shown to the user)
+previous_outputs:
+  do_this_now: <<FILL: previous_output.do_this_now>>
+  why_this_matters: <<FILL: previous_output.why_this_matter>>
+  summary_line: <<FILL: previous_output.summary_line>>
+  habit_guard_line: <<FILL: previous_output.habit_guard_line>>
+
+# Personal signals (may be empty)
+personal:
+  main_discomforts: <<FILL: personal.main_discomforts>>
+  key_goal: <<FILL: personal.key_goal>>
+
+# Recent posture features (summarized)
+recent:
+  dominant_bad_labels: <<FILL: recent.dominant_bad_label>>
+  repeated_pattern: <<FILL: recent.repeated_pattern>>
+  good_pct: <<FILL: recent.good_pct>>
+  severity:
+    continuous_bad_sec: <<FILL: recent.continuous_bad_sec>>
+    repetition_counts: <<FILL: recent.repetition_counts>>
+
+# Session context (1-hour block)
+session:
+  minutes_elapsed: <<FILL: session.minutes_elapsed>>
+  minutes_remaining: <<FILL: session.minutes_remaining>>
+  anchor_candidates: <<FILL: session.anchor_candidates>>
+
+# Planning parameters (defaults are fine if unknown)
+params:
+  reset_interval_min: <<FILL: params.reset_interval_min>>    # if null, pick based on severity (>=80% bad → 20; else 30)
+  stand_sec: <<FILL: params.stand_sec>>                   # default 45
+  forward_bout_cap_sec: <<FILL: params.forward_bout_cap_sec>>        # max allowed duration for forward/recline bouts
+  wants_habit_break_clause: <<FILL: params.wants_habit_break_clause>>
+  wants_anchor_listed: <<FILL: params.wants_anchor_stretch>>
+
+prefs:
+  wants_stretch: <<FILL: prefs.wants_stretch>>
+  allowed_stretches: <<FILL: prefs.allowed_stretches>>
+
+# The model will produce:
+# Line 1: session plan with 1–2 micro-goals + a simple rule + anchors.
+# Line 2: stretch cue (only if prefs.wants_stretch is true and aligned with discomfort/goal).
+# Keep output to 1–2 lines, easy to read.
+
+--------------------------------------------------------------
+[EXAMPLES]
+
+Example 1 — Neutral, forward-heavy, with anchors
+Input highlights:
+  tone_preference=[]
+  personal.key_goal="reduce neck stiffness"
+  recent.dominant_bad_labels=["FORWARD"]
+  session.anchor_candidates=["0:20","0:50"]
+  params:{reset_interval_min:null, stand_sec:45, forward_bout_cap_sec:60, wants_habit_break_clause:true}
+Output:
+  Plan: keep forward‑lean bouts <60s; 30‑sec reset every 30 min. Anchors: 0:20 & 0:50.
+  Stretch: 2‑min chest opener at 0:50. General wellness advice; stop if you feel pain.
+
+Example 2 — Motivational, recline-heavy, no stretch
+Input highlights:
+  tone_preference=["motivational_encouraging"]
+  personal.main_discomforts=["lower back pain"]
+  recent.dominant_bad_labels=["BACK"]
+  session.anchor_candidates=["0:30"]
+  params:{reset_interval_min:30, stand_sec:45, wants_habit_break_clause:true}
+Output:
+  Plan: limit recline bouts <60s; add a 45‑sec stand break at 0:30—let’s break the loop.
+
+Example 3 — Strict, tilt issue, short remaining time
+Input highlights:
+  tone_preference=["authoritative_strict"]
+  recent.dominant_bad_labels=["UPRIGHT_RIGHT"]
+  session.anchor_candidates=["0:45"]
+  params:{reset_interval_min:20, wants_habit_break_clause:false}
+Output:
+  Plan: re‑center tilt during each reset; 30‑sec reset every 20 min. Anchor: 0:45.
+==============================================================

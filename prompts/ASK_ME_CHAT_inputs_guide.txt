@@ -1,0 +1,44 @@
+==============================================================
+ASK_ME_CHAT — Inputs & How to Use
+Version: 1.0 (2025-08-14)
+==============================================================
+
+Provide this block (YAML/JSON-like) with each chat query—no live telemetry required.
+
+question: "Why am I still getting alerts?"
+
+profile:
+  tone_preference: ["motivational_encouraging"]
+  chat_interaction: "occasional_qna"
+  guidance_style: "prescriptive"
+  goals: "reduce neck stiffness"
+  discomforts: ["neck stiffness"]
+  config_intentions: ["tone","notification_frequency","goal_settings"]
+  feedback_modalities: ["text_notification","visual_diagram"]
+  alert_rule: "immediate"
+  trust_preference: {"ai_only_ok": true, "human_checkins_desired": "occasional"}
+  privacy_sensing: {"accepts_storage":"unsure","sensing":["pressure_chair"]}
+
+previous_outputs:
+  do_this_now: "Reset now: sit back; ears over shoulders; relax jaw (30s)."
+  why_this_matters: "Easing neck stiffness: correcting forward lean helps relax the neck and shoulders (recent FORWARD 32×/10 min) this month."
+  summary_line: "Last 10 min: neutral 24% (vs baseline ↓−11%); top: FORWARD ×4 (avg 65s)."
+  habit_guard_line: "Pattern repeating: FORWARD → BACK. Stand 45s, then sit back; ears over shoulders."
+  session_plan:
+    plan_line: "Plan: keep forward‑lean bouts <60s; 30‑sec reset every 30 min. Anchors: 0:20 & 0:50."
+    stretch_line: "Stretch: 2‑min chest opener at 0:50. General wellness advice; stop if you feel pain."
+
+history:
+  baseline_good_pct: 35
+  dominant_labels: ["FORWARD","BACK"]
+  top_sequences: ["FORWARD → BACK","FORWARD LEFT → FORWARD"]
+
+prefs:
+  wants_stretch: true
+  allowed_stretches: ["chest_opener","neck_release"]
+
+Expected output
+Two tailored lines, e.g.:
+  You’re seeing alerts because the FORWARD→BACK loop appears again; the plan caps bouts <60s and schedules a reset.
+  Open the 45‑sec stand timer or run the 2‑min chest opener at 0:50? Wellness advice; stop if painful.
+==============================================================

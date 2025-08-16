@@ -1,0 +1,48 @@
+question: <<FILL: user_message>>
+
+profile:
+  tone_preference: <<FILL: tone_preference>>
+  chat_interaction: <<FILL: profile.chat_interaction>>
+  guidance_style: <<FILL: guidance_style>>
+  goals: <<FILL: personal.key_goal>>                    # e.g., "reduce neck stiffness"
+  discomforts: <<FILL: personal.main_discomforts>>
+  config_intentions: <<FILL: profile.config_intentions>>
+  feedback_modalities: <<FILL: profile.feedback_modality>>
+  alert_rule: <<FILL: profile.alert_rule>>
+  trust_preference: <<FILL: profile.trust_preference>>
+  privacy_sensing: <<FILL: profile.privacy_sensing>>              # e.g., {"accepts_storage":"unsure","sensing":["pressure_chair"]}
+
+previous_outputs:
+  do_this_now: <<FILL: previous_output.do_this_now>>
+  why_this_matters: <<FILL: previous_output.why_this_matter>>
+  summary_line: <<FILL: previous_output.summary_line>>
+  habit_guard_line: <<FILL: previous_output.habit_guard_line>>
+  session_plan: <<FILL: previous_output.session_plan>>
+
+history:
+  good_pct: <<FILL: history.good_pct>>                          # personal baseline good %
+  top_repeated_sequence: <<FILL: history.top_repeated_sequence>>     # e.g., "FORWARD LEFT → FORWARD"
+  dominant_bad_labels: <<FILL: recent.dominant_bad_label>>
+
+prefs:
+  wants_stretch: <<FILL: prefs.wants_stretch>>
+  allowed_stretches: <<FILL: prefs.allowed_stretches>>
+
+# The model will craft two lines, tailored to this participant,
+# leveraging the supplied context only.
+# No more than two lines; each line ≤ ~24 words.
+--------------------------------------------------------------
+[EXAMPLE RESPONSES]
+
+(Neck stiffness, motivational, ask “What should I do for my neck?”)
+Line 1: Try a quick neck‑friendly reset—sit back, lengthen neck, soften jaw; matches your plan and breaks your FORWARD→BACK loop.
+Line 2: Open the 30‑sec reset guide or schedule the 2‑min chest opener at 0:50? Wellness advice; stop if painful.
+
+(Minimal notifications, ask “Why so many alerts?”)
+Line 1: You’re getting alerts due to repeated FORWARD bouts noted in your summary and Habit Guard pattern.
+Line 2: Stand 45s, then reset; want the stand timer?
+
+(Strict user, ask “Show progress.”)
+Line 1: Today: see summary—neutral 24%, top FORWARD ×4 (avg 65s); plan aims to cap bouts <60s.
+Line 2: Open streak view or enforce 45‑sec stand now.
+==============================================================

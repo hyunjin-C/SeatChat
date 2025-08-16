@@ -1,0 +1,53 @@
+==============================================================
+SHORT_TERM_PLAN — Inputs & How to Use
+Version: 1.0 (2025-08-14)
+==============================================================
+
+Provide this block (YAML/JSON-like) when calling the model:
+
+tone_preference: []                     # [] → neutral; ["motivational_encouraging"] or ["authoritative_strict"]
+
+previous_outputs:
+  do_this_now: "Reset now: sit back; ears over shoulders; relax jaw (30s)."
+  why_this_matters: "This supports your lower back—coming forward can ease pressure (BACK 19.5 min)."
+  summary_line: "Last 10 min: neutral 22% (vs baseline ↓−13%); top: FORWARD LEFT ×3 (avg 70s)."
+  habit_guard_line: "Pattern repeating: FORWARD LEFT → FORWARD. Stand 45s, then sit back, shift slightly right; even hips."
+
+personal:
+  main_discomforts: ["neck stiffness"]
+  key_goal: "reduce neck stiffness"
+
+recent:
+  dominant_bad_labels: ["FORWARD LEFT","FORWARD"]
+  repeated_pattern: "FORWARD LEFT → FORWARD"
+  good_pct: 22
+  severity:
+    continuous_bad_sec: 140
+    repetition_counts: {"FORWARD LEFT": 3, "FORWARD": 1}
+
+session:
+  minutes_elapsed: 0
+  minutes_remaining: 60
+  anchor_candidates: ["0:20","0:50"]
+
+params:
+  reset_interval_min: null        # model will pick: bad% ≥80 → 20; else 30
+  stand_sec: 45
+  forward_bout_cap_sec: 60
+  wants_habit_break_clause: true
+  wants_anchor_listed: true
+
+prefs:
+  wants_stretch: true
+  allowed_stretches: ["chest_opener","neck_release","hip_hinge_extension"]
+
+What the model will output
+- One or two concise lines, e.g.:
+  Plan: keep forward‑lean bouts <60s; 30‑sec reset every 30 min. Anchors: 0:20 & 0:50.
+  Stretch: 2‑min chest opener at 0:50. General wellness advice; stop if you feel pain.
+
+Notes
+- If no anchors are available, omit the “Anchors:” phrase.
+- If prefs.wants_stretch is false or allowed_stretches is empty, omit the stretch line.
+- Keep labels uppercase to avoid ambiguity.
+==============================================================

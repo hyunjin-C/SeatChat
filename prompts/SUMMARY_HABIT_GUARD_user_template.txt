@@ -1,0 +1,73 @@
+tone_preference: <<FILL: tone_preference>>
+
+history:
+  good_pct: <<FILL: history.good_pct>>                          # personal baseline good %
+  top_repeated_sequence: <<FILL: history.top_repeated_sequence>>     # e.g., "FORWARD LEFT → FORWARD"
+  # (Optional) you may also include a small table of historical label times/counts for reference.
+
+recent:
+  window_min: <<FILL: recent.window_min>>
+  good_pct: <<FILL: recent.good_pct>>
+  top_labels:
+    - label: <<FILL: recent.top_label>>
+      count: <<FILL: recent.top_count>>
+      avg_seconds: <<FILL: recent.top_avg_sec>>
+  continuous_bad_sec: <<FILL: recent.continuous_bad_sec>>
+  repetition_label: <<FILL: recent.repetition_label>>
+
+params:
+  N: <<FILL: params.N>>                 # repetition threshold
+  M: <<FILL: params.M>>                # repetition window
+  T_sec: <<FILL: params.T_sec>>           # continuous bad threshold
+  delta_pct_threshold: <<FILL: params.delta_pct_threshold>> # % drop vs baseline that should trigger guard
+  suggest_stand_break: <<FILL: params.suggest_stand_break>>
+  stand_sec: <<FILL: params.suggest_stand_break_sec>>
+
+# The model will format:
+# Line 1: summary + delta vs baseline + top labels with counts/avg seconds.
+# Line 2: only if triggered; compact pattern text + micro-break + direction-aware micro-reset.
+
+--------------------------------------------------------------
+[EXAMPLES]
+
+Example 1 — Summary only (improved vs baseline)
+Input highlights:
+  tone_preference=[]
+  history.good_pct=40
+  recent.window_min=10
+  recent.good_pct=52
+  recent.top_labels=[{label:"FORWARD",count:2,avg_seconds:60},{label:"BACK",count:1,avg_seconds:40}]
+  recent.continuous_bad_sec=45
+  params.delta_pct_threshold=5
+Output:
+  Last 10 min: neutral 52% (vs baseline ↑+12%); top: FORWARD ×2 (avg 60s), BACK ×1 (avg 40s).
+
+Example 2 — Summary + Habit Guard (motivational)
+Input highlights:
+  tone_preference=["motivational_encouraging"]
+  history.good_pct=35
+  history.top_repeated_sequence="FORWARD LEFT → FORWARD"
+  recent.window_min=20
+  recent.good_pct=22
+  recent.top_labels=[{label:"FORWARD LEFT",count:3,avg_seconds:70}]
+  recent.continuous_bad_sec=140
+  recent.most_repeated_sequence="FORWARD LEFT → FORWARD"
+  params:{N:3,M:20,T_sec:120,delta_pct_threshold:5,suggest_stand_break:true,stand_sec:45}
+Output:
+  Last 20 min: neutral 22% (vs baseline ↓−13%); top: FORWARD LEFT ×3 (avg 70s).
+  Pattern repeating: FORWARD LEFT → FORWARD. Stand 45s, then sit back, shift slightly right; even hips.
+
+Example 3 — Summary + Habit Guard (strict)
+Input highlights:
+  tone_preference=["authoritative_strict"]
+  history.good_pct=48
+  recent.window_min=10
+  recent.good_pct=30
+  recent.top_labels=[{label:"FORWARD",count:4,avg_seconds:65},{label:"BACK",count:2,avg_seconds:50}]
+  recent.repetition: {FORWARD:4}
+  recent.continuous_bad_sec=130
+  params:{N:3,M:20,T_sec:120,delta_pct_threshold:5,suggest_stand_break:true,stand_sec:45}
+Output:
+  Last 10 min: neutral 30% (vs baseline ↓−18%); top: FORWARD ×4 (avg 65s), BACK ×2 (avg 50s).
+  Stop. Pattern repeating: forward ×4/20min. Stand 45s, then sit back; ears over shoulders.
+==============================================================

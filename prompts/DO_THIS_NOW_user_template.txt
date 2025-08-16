@@ -1,0 +1,73 @@
+tone_preference: <<FILL: tone_preference>>
+guidance_style: <<FILL: guidance_style>>
+
+live:
+  current_label: <<FILL: live.current_label>>
+  continuous_seconds_current_label: <<FILL: live.continuous_seconds_current_label>>
+
+batch_window_minutes: <<FILL: batch.window_minutes>>
+batch_summary:
+  top_time_label: <<FILL: batch.top_time_label>>
+  top_time_minutes: <<FILL: batch.top_time_minutes>>
+  top_repetition_label: <<FILL: batch.top_repetition_label>>
+  top_repetition_count: <<FILL: batch.top_repetition_count>>
+  good_minutes: <<FILL: batch.good_minutes>>
+  bad_minutes: <<FILL: batch.bad_minutes>>
+  good_pct: <<FILL: batch.good_pct>>
+  bad_pct: <<FILL: batch.bad_pct>>
+
+# Optional personal context (can be empty)
+personal:
+  main_discomforts: <<FILL: personal.main_discomforts>>
+  key_goal: <<FILL: personal.key_goal>>
+
+Return only the single prescriptive line.
+
+--------------------------------------------------------------
+[EXAMPLES]
+
+A) Neutral, forward pattern, severe → (45s)
+Input highlights:
+  tone_preference=[]
+  live.current_label=FORWARD
+  continuous_seconds_current_label=140
+  top_repetition_count=5
+  bad_pct=96
+Output:
+  Reset now: sit back; ears over shoulders; lengthen neck; relax jaw (45s).
+
+B) Motivational, recline pattern, moderate → (30s)
+Input highlights:
+  tone_preference=["motivational_encouraging"]
+  live.current_label=BACK
+  continuous_seconds_current_label=70
+  top_repetition_count=2
+  bad_pct=88
+Output:
+  Quick reset—come forward; ribs over hips; hinge at hips; gentle breath (30s).
+
+C) Strict, repeated forward‑left → (45s)
+Input highlights:
+  tone_preference=["authoritative_strict"]
+  live.current_label=FORWARD_LEFT
+  continuous_seconds_current_label=95
+  top_repetition_count=4
+  bad_pct=92
+Output:
+  Stop. Sit back, shift slightly right; even hips; align ears over shoulders (45s).
+
+D) Maintenance while upright → (20s)
+Input highlights:
+  tone_preference=[]
+  live.current_label=UPRIGHT
+Output:
+  Hold neutral; relax shoulders; easy breaths (20s).
+
+E) Facilitative user → (30s)
+Input highlights:
+  guidance_style="facilitative"
+  live.current_label=UPRIGHT_RIGHT
+  bad_pct=76
+Output:
+  Re‑center from right tilt—drop left shoulder; even weight (30s)?
+==============================================================

@@ -1,0 +1,66 @@
+tone_preference: <<FILL: tone_preference>>
+
+live:
+  current_label: <<FILL: live.current_label>>
+
+batch_window_minutes: <<FILL: batch.window_minutes>>
+batch_summary:
+  top_time_label: <<FILL: batch.top_time_label>>
+  top_time_minutes: <<FILL: batch.top_time_minutes>>          # e.g., 19.47
+  top_repetition_label: <<FILL: batch.top_repetition_label>>
+  top_repetition_count: <<FILL: batch.top_repetition_count>>     # e.g., 32
+  bad_pct: <<FILL: batch.bad_pct>>                 # e.g., 99.93
+
+personal:
+  main_discomforts: <<FILL: personal.main_discomforts>>
+  key_goal: <<FILL: personal.key_goal>>    # e.g., "reduce neck stiffness"
+  improvement_timeframe: <<FILL: personal.improvement_timeframe>>
+
+# The model will produce ONE sentence that:
+#  - Mentions the personal discomfort or goal (or a neutral benefit if missing)
+#  - Briefly cites the posture evidence (latest current_label and/or batch dominant label)
+#  - Is friendly, clear, and free of fear language
+#  - Ends as a plain sentence (no duration needed here)
+
+--------------------------------------------------------------
+[EXAMPLES]
+
+A) Neutral, forward-heavy batch, neck goal
+Input highlights:
+  tone_preference=[]
+  live.current_label=FORWARD
+  batch_window_minutes=10
+  batch_summary.top_time_label=BACK
+  batch_summary.top_time_minutes=19.5
+  batch_summary.top_repetition_label=FORWARD
+  batch_summary.top_repetition_count=32
+  batch_summary.bad_pct=99.93
+  personal.key_goal="reduce neck stiffness"
+  personal.improvement_timeframe="this month"
+Output:
+  Easing neck stiffness: correcting forward lean helps relax the neck and shoulders (recent FORWARD 32×/10 min) this month.
+
+B) Motivational, recline-heavy batch, low-back discomfort
+Input highlights:
+  tone_preference=["motivational_encouraging"]
+  live.current_label=BACK
+  batch_summary.top_time_label=BACK
+  top_time_minutes=19.5
+  bad_pct=96
+  personal.main_discomforts=["lower back pain"]
+  improvement_timeframe=null
+Output:
+  This supports your lower back—coming forward can ease pressure from recent recline (BACK 19.5 min).
+
+C) Upright now, but batch shows lateral tilt
+Input highlights:
+  tone_preference=[]
+  live.current_label=UPRIGHT
+  batch_summary.top_time_label=UPRIGHT_RIGHT
+  top_time_minutes=8.2
+  bad_pct=78
+  personal.key_goal=null
+Output:
+  Staying centered helps you stay comfortable and focused (recent right tilt UPRIGHT_RIGHT 8.2 min).
+
+==============================================================
