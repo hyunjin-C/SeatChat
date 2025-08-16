@@ -5,13 +5,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
-
+import os
 from langchain.memory import ConversationSummaryBufferMemory
 from langchain.schema import SystemMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import ChatOpenAI
 
 import importlib.util
 from models import ToDoBundle
@@ -19,6 +18,8 @@ from models import ToDoBundle
 BEHAVIOR_PATH = str(Path("./scripts/posture_behavior_analysis_all.py"))
 PATTERN_PATH  = str(Path("./scripts/posture_pattern_all_repeat_time.py"))
 RANKING_PATH  = str(Path("./scripts/posture_ranking_all.py"))
+ASK_ME_CHAT_SYSTEM_PROMPT = str(Path("./prompts/ASK_ME_CHAT_system_prompt.txt"))
+ASK_ME_CHAT_USER_TEMPLATE = str(Path("./prompts/ASK_ME_CHAT_user_template.txt"))
 
 PREFERENCES_JSON_PATH = Path("./data/user_preferences.json")
 
@@ -31,6 +32,76 @@ def _load_module(name: str, file_path: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+def _read_text(path: str) -> str:
+    if not path or not os.path.exists(path):
+        raise FileNotFoundError(f"Prompt file not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+def _clip_words(text: str, max_words: int = 24) -> str:
+    parts = text.split()
+    return text if len(parts) <= max_words else " ".join(parts[:max_words])
+
+def _fill_user_template(template_text: str, payload: dict) -> str:
+    """[USER MESSAGE TEMPLATE]의 <<FILL: ...>> 토큰을 payload 값으로 치환"""
+    def J(x): return json.dumps(x, ensure_ascii=False)
+    filled = template_text
+
+    # 기본 필드
+    filled = filled.replace("<<FILL: the user’s chat message>>", payload.get("question",""))
+
+    # profile
+    prof = payload.get("profile", {})
+    # 주의: 템플릿의 라디오형 옵션은 문자열 그대로 필요할 수 있어 .strip('"') 사용
+    filled = filled.replace(
+        '<<FILL: [] or ["motivational_encouraging"] or ["authoritative_strict"] or ["neutral_informational"]>>',
+        J(prof.get("tone_preference", []))
+    )
+    filled = filled.replace(
+        '<<FILL: "minimal_notifications" | "conversational" | "occasional_qna">>',
+        J(prof.get("chat_interaction","conversational")).strip('"')
+    )
+    filled = filled.replace(
+        '<<FILL: "prescriptive" | "facilitative" | "mixed" | "unspecified">>',
+        J(prof.get("guidance_style","unspecified")).strip('"')
+    )
+    filled = filled.replace("<<FILL: short phrase or null>>", J(prof.get("goals")))
+    filled = filled.replace('<<FILL: ["neck stiffness","lower back pain"] or []>>', J(prof.get("discomforts", [])))
+    filled = filled.replace('<<FILL: ["tone","notification_frequency","feedback_modality","goal_settings"] or []>>',
+                            J(prof.get("config_intentions", [])))
+    filled = filled.replace('<<FILL: ["text_notification","visual_diagram","auditory_voice","tactile_vibration"] or []>>',
+                            J(prof.get("feedback_modalities", [])))
+    filled = filled.replace(
+        '<<FILL: "immediate" | "every_few_minutes" | "hourly_summary" | "only_when_extremely_bad" | "user_configurable" | "unspecified">>',
+        J(prof.get("alert_rule", "unspecified")).strip('"')
+    )
+    filled = filled.replace('<<FILL: {"ai_only_ok":true|null,"human_checkins_desired":"none|occasional|regular"}>>',
+                            J(prof.get("trust_preference", {})))
+    filled = filled.replace("<<FILL: brief note or {}>>", J(prof.get("privacy_sensing", {})))
+
+    # previous_outputs
+    prev = payload.get("previous_outputs", {})
+    filled = filled.replace("<<FILL: string from box 1>>", J(prev.get("do_this_now","")).strip('"'))
+    filled = filled.replace("<<FILL: string from box 2>>", J(prev.get("why_this_matters","")).strip('"'))
+    filled = filled.replace("<<FILL: string from box 3 line 1>>", J(prev.get("summary_line","")).strip('"'))
+    filled = filled.replace("<<FILL: string from box 3 line 2 or null>>", J(prev.get("habit_guard_line")))
+    sess = prev.get("session_plan", {})
+    filled = filled.replace("<<FILL: string from box 4 line 1>>", J(sess.get("plan_line","")).strip('"'))
+    filled = filled.replace("<<FILL: string from box 4 line 2 or null>>", J(sess.get("stretch_line")))
+
+    # history
+    hist = payload.get("history", {})
+    filled = filled.replace("<<FILL: integer or null>>", J(hist.get("baseline_good_pct")))
+    filled = filled.replace('<<FILL: ["FORWARD","BACK"] or []>>', J(hist.get("dominant_labels", [])))
+    filled = filled.replace('<<FILL: ["FORWARD → BACK","BACK → FORWARD"] or []>>', J(hist.get("top_sequences", [])))
+
+    # prefs
+    pr = payload.get("prefs", {})
+    filled = filled.replace("<<FILL: true|false>>", J(pr.get("wants_stretch", False)))
+    filled = filled.replace('<<FILL: ["chest_opener","neck_release","hip_hinge_extension"] or []>>',
+                            J(pr.get("allowed_stretches", [])))
+    return filled
 
 class _Pipeline:
     """
@@ -671,36 +742,156 @@ class _Pipeline:
             "Summary and Habit Guard": todo.summary_and_habit_guide,
             "Short Term Plan": todo.short_term_plan,
         }
+    def get_profile_for_participant(self) -> dict:
+        """
+        preferences JSON에서 현재 user_id의 요약된 채팅 프로필을 구성해 반환.
+        self.preference는 선택된 사용자에 대한 dict라고 가정.
+        """
+        p = self.preference or {}
+        # 톤/상호작용/가이던스 기본값
+        tone_pref = p.get("tone_preference", [])
+        chat_interaction = p.get("chat_interaction", "conversational")
+        guidance_style = p.get("guidance_style", "unspecified")
+        # 개인 목표/불편
+        goals = p.get("key_goal") or p.get("goal") or None
+        discomforts = p.get("pain_flags") or p.get("discomforts") or []
+        # 설정 의도/모달리티/알림/신뢰/프라이버시
+        config_intentions = p.get("config_intentions", [])
+        feedback_modalities = p.get("feedback_modalities", ["text_notification"])
+        alert_rule = p.get("alert_rule", "unspecified")
+        trust_preference = p.get("trust_preference", {"ai_only_ok": True, "human_checkins_desired": "occasional"})
+        privacy_sensing = p.get("privacy_sensing", {})
+
+        return {
+            "tone_preference": tone_pref,
+            "chat_interaction": chat_interaction,
+            "guidance_style": guidance_style,
+            "goals": goals,
+            "discomforts": discomforts,
+            "config_intentions": config_intentions,
+            "feedback_modalities": feedback_modalities,
+            "alert_rule": alert_rule,
+            "trust_preference": trust_preference,
+            "privacy_sensing": privacy_sensing,
+        }
+
+    def get_previous_outputs_bundle(self) -> dict:
+        """
+        최근 To-Do 결과(self.last_todo)를 채팅 컨텍스트 형태로 변환.
+        """
+        t = self.last_todo
+        return {
+            "do_this_now": t.do_this_now if t else "",
+            "why_this_matters": t.why_this_matters if t else "",
+            "summary_line": (t.summary_and_habit_guide.split("\n")[0] if t and t.summary_and_habit_guide else ""),
+            "habit_guard_line": (
+                t.summary_and_habit_guide.split("\n")[1]
+                if t and t.summary_and_habit_guide and "\n" in t.summary_and_habit_guide else None
+            ),
+            "session_plan": {
+                "plan_line": (t.short_term_plan.split("\n")[0] if t and t.short_term_plan else ""),
+                "stretch_line": (
+                    t.short_term_plan.split("\n")[1]
+                    if t and t.short_term_plan and "\n" in t.short_term_plan else None
+                ),
+            }
+        }
+
+    def get_history_summary_for_chat(self) -> dict:
+        """
+        분석에서 만든 지표(self.posture_summary_metrics)로 채팅 요약 컨텍스트 생성.
+        """
+        m = self.posture_summary_metrics or {}
+        core = m.get("core", {}) or {}
+        dom  = m.get("dominance_top", {}) or {}
+        motifs = m.get("motif_summary", {}) or {}
+
+        baseline_good_pct = core.get("Good posture time (%)")
+        dominant_labels = []
+        if dom.get("top_time_label"): dominant_labels.append(dom["top_time_label"])
+        if dom.get("top_repetition_label") and dom["top_repetition_label"] not in dominant_labels:
+            dominant_labels.append(dom["top_repetition_label"])
+
+        l3_top = motifs.get("L3", {}).get("most_repeated_sequence")
+        l2_top = motifs.get("L2", {}).get("most_repeated_sequence")
+        top_sequences = [s for s in [l3_top, l2_top] if s]
+
+        return {
+            "baseline_good_pct": baseline_good_pct,
+            "dominant_labels": dominant_labels,
+            "top_sequences": top_sequences,
+        }
+
+    def get_runtime_prefs_for_chat(self) -> dict:
+        """
+        런타임 옵션(스트레치 허용 등). self.preference에서 파생하거나 별도 상태를 쓸 수 있음.
+        """
+        p = self.preference or {}
+        wants_stretch = bool(p.get("wants_stretch", False))
+        allowed = p.get("allowed_stretches", ["chest_opener","neck_release","hip_hinge_extension"])
+        return {"wants_stretch": wants_stretch, "allowed_stretches": allowed}
 
     def chat_once(self, user_message: str) -> AIMessage:
         """
         GUI의 채팅 입력을 받아 LLM 답변(AIMessage) 반환
+        - 단일 System 프롬프트 + User 템플릿
+        - 참가자별 메모리 유지(요약)
         """
         if self.llm is None:
             raise RuntimeError("LLM is not initialized. Call configure_llm(...) first.")
         self.ensure_memory()
 
-        sys = SystemMessage(content=(
-            "당신은 개인 자세 코치입니다. 간결하고 실행가능한 한국어 답변을 선호합니다.\n\n"
-            f"[최신 자세 요약]\n{self.posture_summary_text}\n\n"
-            f"[최신 To-Do(JSON)]\n{json.dumps(self.last_todo.dict() if self.last_todo else {}, ensure_ascii=False)}\n\n"
-            f"[고정 Preference(JSON)]\n{json.dumps(self.preference, ensure_ascii=False)}\n"
-            "과도한 의학적 주장/진단은 피하고, 실행 단계/트리거/환경 단서를 명시하세요."
-        ))
-        human = HumanMessage(content=user_message)
+        # 1) 프롬프트 파일 로드 (PLACEHOLDER)
+        system_prompt_text = _read_text(ASK_ME_CHAT_SYSTEM_PROMPT)
+        user_template_text = _read_text(ASK_ME_CHAT_USER_TEMPLATE)
 
-        hist = self.memory.load_memory_variables({}).get("history", [])
-        messages = [sys]
-        if isinstance(hist, list):
-            messages.extend(hist)
-        elif hist:
-            messages.append(SystemMessage(content=str(hist)))
-        messages.append(human)
+        # 2) 이 참가자 컨텍스트 구성
+        profile = self.get_profile_for_participant()               # dict
+        prev_outputs = self.get_previous_outputs_bundle()          # dict: {do_this_now, why_this_matters, ...}
+        history = self.get_history_summary_for_chat()              # dict: {baseline_good_pct, dominant_labels, ...}
+        prefs   = self.get_runtime_prefs_for_chat()                # dict: {wants_stretch, allowed_stretches, ...}
 
+        payload = {
+            "question": user_message,
+            "profile": profile,
+            "previous_outputs": prev_outputs,
+            "history": history,
+            "prefs": prefs,
+        }
+        user_filled_template = _fill_user_template(user_template_text, payload)
+
+        # 3) 메모리(요약) 불러와 앞에 붙이기
+        prior = self.memory.load_memory_variables({}).get("history", [])
+        # ChatPromptTemplate: 단일 system + 단일 human
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", "{system_prompt}"),
+            ("human", "{user_filled_template}")
+        ])
+        messages = []
+        if isinstance(prior, list):
+            messages.extend(prior)
+        elif prior:
+            messages.append(SystemMessage(content=str(prior)))
+        messages.extend(
+            prompt.format_messages(system_prompt=system_prompt_text,
+                                user_filled_template=user_filled_template)
+        )
+
+        # 4) 호출
         resp = self.llm.invoke(messages)
-        ai_text = getattr(resp, "content", str(resp))
-        self.memory.save_context({"input": user_message}, {"output": ai_text})
-        return AIMessage(content=ai_text)
+        ai_text = getattr(resp, "content", str(resp)).strip()
+
+        # 5) 사후 규격 강제: 정확히 2줄, 각 줄 ≤ 24 단어
+        lines = [ln.strip() for ln in ai_text.splitlines() if ln.strip()]
+        if len(lines) < 2:  # 2줄 보장
+            lines = (lines + ["(follow-up omitted)"])[:2]
+        lines = [_clip_words(ln, 24) for ln in lines[:2]]
+        final = "\n".join(lines)
+
+        # 6) 메모리에 저장 (LangChain 관례 키: human/ai)
+        self.memory.save_context(inputs={"human": user_message}, outputs={"ai": final})
+
+        return AIMessage(content=final)
 
 _PIPE = _Pipeline()
 
